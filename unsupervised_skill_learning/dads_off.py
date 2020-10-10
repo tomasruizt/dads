@@ -24,6 +24,9 @@ from absl import flags, logging
 import functools
 
 import sys
+
+from envs.point2d_env import make_point2d_env
+
 sys.path.append(os.path.abspath('./'))
 
 import matplotlib
@@ -234,7 +237,9 @@ def _normal_projection_net(action_spec, init_means_output_factor=0.1):
 
 def get_environment(env_name='point_mass'):
   global observation_omit_size
-  if env_name == 'Ant-v1':
+  if env_name == 'point2d':
+    env = make_point2d_env()
+  elif env_name == 'Ant-v1':
     env = ant.AntEnv(
         expose_all_qpos=True,
         task='motion')
