@@ -733,22 +733,26 @@ def eval_loop(eval_dir,
             resample_prob=FLAGS.resample_prob),
         max_episode_steps=FLAGS.max_env_steps)
 
-    # record videos for sampled trajectories
-    if vid_name is not None:
-      full_vid_name = vid_name + '_' + str(skill_idx)
-      eval_env = video_wrapper.VideoWrapper(eval_env, base_path=eval_dir, base_name=full_vid_name)
-
-    per_skill_evaluations = 1
+    per_skill_evaluations = 5
     predict_trajectory_steps = 0
 
     for eval_idx in range(per_skill_evaluations):
+
+      # record videos for sampled trajectories
+      do_record_video = vid_name is not None and eval_idx == 0
+      if do_record_video:
+        full_vid_name = vid_name + '_' + str(skill_idx)
+        traj_env = video_wrapper.VideoWrapper(eval_env, base_path=eval_dir, base_name=full_vid_name)
+      else:
+        traj_env = eval_env
+
       eval_trajectory = run_on_env(
-          eval_env,
+          traj_env,
           eval_policy,
           dynamics=dynamics if predict_trajectory_steps > 0 else None,
           predict_trajectory_steps=predict_trajectory_steps,
           return_data=True,
-          close_environment=eval_idx == per_skill_evaluations - 1)
+          close_environment=do_record_video)
 
       trajectory_coordinates = np.asarray([step[0][:2] for step in eval_trajectory])
 
