@@ -30,6 +30,7 @@ from envs.point2d_env import make_point2d_env
 sys.path.append(os.path.abspath('./'))
 
 import matplotlib
+import seaborn as sns
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
@@ -697,22 +698,16 @@ def eval_loop(eval_dir,
     num_evals = FLAGS.num_evals
 
   if plot_name is not None:
-    # color_map = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
-    color_map = ['b', 'g', 'r', 'c', 'm', 'y']
-    style_map = []
-    for line_style in ['-', '--', '-.', ':']:
-      style_map += [color + line_style for color in color_map]
+    palette = sns.color_palette('hls', num_evals)
+    fig, ax = plt.subplots(figsize=(12, 12))
+    ax.set_xlim(-1, 1)
+    ax.set_ylim(-1, 1)
 
-    plt.xlim(-15, 15)
-    plt.ylim(-15, 15)
-    # all_trajectories = []
-    # all_predicted_trajectories = []
-
-  for idx in range(num_evals):
+  for skill_idx in range(num_evals):
     if FLAGS.num_skills > 0:
       if FLAGS.deterministic_eval:
         preset_skill = np.zeros(FLAGS.num_skills, dtype=np.int64)
-        preset_skill[idx] = 1
+        preset_skill[skill_idx] = 1
       elif FLAGS.skill_type == 'discrete_uniform':
         preset_skill = np.random.multinomial(1, [1. / FLAGS.num_skills] *
                                              FLAGS.num_skills)
@@ -740,88 +735,48 @@ def eval_loop(eval_dir,
 
     # record videos for sampled trajectories
     if vid_name is not None:
-      full_vid_name = vid_name + '_' + str(idx)
+      full_vid_name = vid_name + '_' + str(skill_idx)
       eval_env = video_wrapper.VideoWrapper(eval_env, base_path=eval_dir, base_name=full_vid_name)
 
-    mean_reward = 0.
     per_skill_evaluations = 1
     predict_trajectory_steps = 0
-    # trajectories_per_skill = []
-    # predicted_trajectories_per_skill = []
+
     for eval_idx in range(per_skill_evaluations):
       eval_trajectory = run_on_env(
           eval_env,
           eval_policy,
-          dynamics=dynamics,
+          dynamics=dynamics if predict_trajectory_steps > 0 else None,
           predict_trajectory_steps=predict_trajectory_steps,
           return_data=True,
-          close_environment=True if eval_idx == per_skill_evaluations -
-          1 else False)
+          close_environment=eval_idx == per_skill_evaluations - 1)
 
-      trajectory_coordinates = np.array([
-          eval_trajectory[step_idx][0][:2]
-          for step_idx in range(len(eval_trajectory))
-      ])
+      trajectory_coordinates = np.asarray([step[0][:2] for step in eval_trajectory])
 
-      # trajectory_states = np.array([
-      #     eval_trajectory[step_idx][0]
-      #     for step_idx in range(len(eval_trajectory))
-      # ])
-      # trajectories_per_skill.append(trajectory_states)
       if plot_name is not None:
-        plt.plot(
-            trajectory_coordinates[:, 0],
-            trajectory_coordinates[:, 1],
-            style_map[idx % len(style_map)],
-            label=(str(idx) if eval_idx == 0 else None))
-        # plt.plot(
-        #     trajectory_coordinates[0, 0],
-        #     trajectory_coordinates[0, 1],
-        #     marker='o',
-        #     color=style_map[idx % len(style_map)][0])
+        ax.plot(
+            *trajectory_coordinates.T,
+            label=(str(skill_idx) if eval_idx == 0 else None),
+            c=palette[skill_idx]
+        )
+
         if predict_trajectory_steps > 0:
-          # predicted_states = np.array([
-          #     eval_trajectory[step_idx][-1]
-          #     for step_idx in range(len(eval_trajectory))
-          # ])
-          # predicted_trajectories_per_skill.append(predicted_states)
           for step_idx in range(len(eval_trajectory)):
             if step_idx % 20 == 0:
-              plt.plot(eval_trajectory[step_idx][-1][:, 0],
+              ax.plot(eval_trajectory[step_idx][-1][:, 0],
                        eval_trajectory[step_idx][-1][:, 1], 'k:')
 
-      mean_reward += np.mean([
-          eval_trajectory[step_idx][-1]
-          for step_idx in range(len(eval_trajectory))
-      ])
       metadata.write(
-          str(idx) + ' ' + str(preset_skill) + ' ' +
+          str(skill_idx) + ' ' + str(preset_skill) + ' ' +
           str(trajectory_coordinates[-1, :]) + '\n')
 
-    # all_predicted_trajectories.append(
-    #     np.stack(predicted_trajectories_per_skill))
-    # all_trajectories.append(np.stack(trajectories_per_skill))
-
-  # all_predicted_trajectories = np.stack(all_predicted_trajectories)
-  # all_trajectories = np.stack(all_trajectories)
-  # print(all_trajectories.shape, all_predicted_trajectories.shape)
-  # pkl.dump(
-  #     all_trajectories,
-  #     tf.io.gfile.GFile(
-  #         os.path.join(vid_dir, 'skill_dynamics_full_obs_r100_actual_trajectories.pkl'),
-  #         'wb'))
-  # pkl.dump(
-  #     all_predicted_trajectories,
-  #     tf.io.gfile.GFile(
-  #         os.path.join(vid_dir, 'skill_dynamics_full_obs_r100_predicted_trajectories.pkl'),
-  #         'wb'))
   if plot_name is not None:
-    full_image_name = plot_name + '.png'
+    fig.tight_layout()
+    ax.legend()
 
+    full_image_name = plot_name + '.png'
     # to save images while writing to CNS
     buf = io.BytesIO()
-    # plt.title('Trajectories in Continuous Skill Space')
-    plt.savefig(buf, dpi=600, bbox_inches='tight')
+    fig.savefig(buf, dpi=160, bbox_inches='tight')
     buf.seek(0)
     image = tf.io.gfile.GFile(os.path.join(eval_dir, full_image_name), 'w')
     image.write(buf.read(-1))
