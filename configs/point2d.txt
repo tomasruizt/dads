@@ -4,21 +4,20 @@
 --run_train=1
 --num_skills=6
 --skill_type=discrete_uniform
+--run_eval=0
+--deterministic_eval=1
 
 --save_model=dads
 --vid_name=skill
---record_freq=200
 
 --replay_buffer_capacity=100000
 --initial_collect_steps=2000
 --collect_steps=500
+--record_freq=200
 --num_epochs=1001
 
 --agent_train_steps=32
 --agent_batch_size=128
 --hidden_layer_size=128
-
---run_eval=0
---deterministic_eval=1
 
 --debug=1
