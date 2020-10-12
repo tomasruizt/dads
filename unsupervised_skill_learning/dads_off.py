@@ -32,7 +32,7 @@ sys.path.append(os.path.abspath('./'))
 
 import matplotlib
 import seaborn as sns
-matplotlib.use('Agg')
+matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
@@ -1452,6 +1452,16 @@ def main(_):
                         tag='episode_size',
                         simple_value=np.mean(episode_size_buffer[:-1]))
                 ]), sample_count)
+
+            should_log_state_distribution = iter_count % 10 == 0
+            if should_log_state_distribution:
+                def make_hist(dim, dim_data):
+                    return tf.summary.histogram(name=f"tracked-dim/{dim}", data=dim_data, step=sample_count)
+
+                with train_summary_writer.as_default():
+                    all_histograms = [make_hist(dim, dim_data) for dim, dim_data in enumerate(input_obs.T)]
+                    sess.run(all_histograms)
+
           if len(episode_return_buffer) > 1:
             train_writer.add_summary(
                 tf.compat.v1.Summary(value=[
