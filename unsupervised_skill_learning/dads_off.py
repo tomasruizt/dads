@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import inspect
 import time
 import pickle as pkl
 import os
@@ -237,12 +238,15 @@ def _normal_projection_net(action_spec, init_means_output_factor=0.1):
       std_transform=sac_agent.std_clip_transform,
       scale_distribution=True)
 
+
 def get_environment(env_name='point_mass'):
   global observation_omit_size
   if env_name == 'point2d':
     env = make_point2d_env()
   elif env_name == "fetch":
     env = make_fetch_pick_and_place_env()
+  elif env_name == "fetch_goal":
+    return wrap_env(make_fetch_pick_and_place_env(), max_episode_steps=50)
   elif env_name == 'Ant-v1':
     env = ant.AntEnv(
         expose_all_qpos=True,
@@ -988,8 +992,10 @@ def eval_mppi(
                                                         cur_primitives)
 
           # update running stuff
-          dense_reward = env.compute_reward(running_cur_state,
-                                            predicted_next_state)
+          kwargs = dict()
+          if "info" in inspect.signature(env.compute_reward).parameters:
+              kwargs["info"] = None
+          dense_reward = env.compute_reward(running_cur_state, predicted_next_state, **kwargs)
           # modification for sparse_reward
           if sparsify_rewards:
             sparse_reward = 5.0 * (dense_reward > -2) + 0.0 * (
@@ -1533,151 +1539,33 @@ def main(_):
 
         # for planning the evaluation directory is changed to save directory
         eval_dir = os.path.join(log_dir, 'eval')
-        goal_coord_list = [
-            np.array([10.0, 10.0]),
-            np.array([-10.0, 10.0]),
-            np.array([-10.0, -10.0]),
-            np.array([10.0, -10.0]),
-            np.array([0.0, -10.0]),
-            np.array([5.0, 10.0])
-        ]
-
         eval_dir = os.path.join(eval_dir, 'mpc_eval')
         if not tf.io.gfile.exists(eval_dir):
           tf.io.gfile.makedirs(eval_dir)
-        save_label = 'goal_'
         if 'discrete' in FLAGS.skill_type:
           planning_fn = eval_planning
-          
         else:
           planning_fn = eval_mppi
 
-        color_map = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
-
-        average_reward_all_goals = []
-        _, ax1 = plt.subplots(1, 1)
-        ax1.set_xlim(-20, 20)
-        ax1.set_ylim(-20, 20)
-
-        final_text = open(os.path.join(eval_dir, 'eval_data.txt'), 'w')
-
-        # goal_list = []
-        # for r in range(4, 50):
-        #   for _ in range(10):
-        #     theta = np.random.uniform(-np.pi, np.pi)
-        #     goal_x = r * np.cos(theta)
-        #     goal_y = r * np.sin(theta)
-        #     goal_list.append([r, theta, goal_x, goal_y])
-
-        # def _sample_goal():
-        #   goal_coords = np.random.uniform(0, 5, size=2)
-        #   # while np.linalg.norm(goal_coords) < np.linalg.norm([10., 10.]):
-        #   #   goal_coords = np.random.uniform(-25, 25, size=2)
-        #   return goal_coords
-
-        # goal_coord_list = [_sample_goal() for _ in range(50)]
-
-        for goal_idx, goal_coord in enumerate(goal_coord_list):
-          # for goal_idx in range(1):
-          print('Trying to reach the goal:', goal_coord)
-          # eval_plan_env = video_wrapper.VideoWrapper(
-          #     get_environment(env_name=FLAGS.environment + '_goal')
-          #     base_path=eval_dir,
-          #     base_name=save_label + '_' + str(goal_idx)))
-          # goal_coord = np.array(item[2:])
-          eval_plan_env = get_environment(env_name=FLAGS.environment + '_goal')
-          # _, (ax1, ax2) = plt.subplots(1, 2)
-          # ax1.set_xlim(-12, 12)
-          # ax1.set_ylim(-12, 12)
-          # ax2.set_xlim(-1, 1)
-          # ax2.set_ylim(-1, 1)
-          ax1.plot(goal_coord[0], goal_coord[1], marker='x', color='k')
-          reward_list = []
-
-          def _steps_to_goal(dist_array):
-            for idx in range(len(dist_array)):
-              if -dist_array[idx] < 1.5:
-                return idx
-            return -1
-
-          for _ in range(1):
-            reward, actual_coords, primitives, distance_to_goal_array = planning_fn(
-                eval_plan_env, agent.skill_dynamics, eval_policy,
-                latent_action_space_size=FLAGS.num_skills,
-                episode_horizon=FLAGS.max_env_steps,
-                planning_horizon=FLAGS.planning_horizon,
-                primitive_horizon=FLAGS.primitive_horizon,
-                num_candidate_sequences=FLAGS.num_candidate_sequences,
-                refine_steps=FLAGS.refine_steps,
-                mppi_gamma=FLAGS.mppi_gamma,
-                prior_type=FLAGS.prior_type,
-                smoothing_beta=FLAGS.smoothing_beta,
-                top_primitives=FLAGS.top_primitives
-            )
-            reward /= (FLAGS.max_env_steps * np.linalg.norm(goal_coord))
-            ax1.plot(
-                actual_coords[:, 0],
-                actual_coords[:, 1],
-                color_map[goal_idx % len(color_map)],
-                linewidth=1)
-            # ax2.plot(
-            #     primitives[:, 0],
-            #     primitives[:, 1],
-            #     marker='x',
-            #     color=color_map[try_idx % len(color_map)],
-            #     linewidth=1)
-            final_text.write(','.join([
-                str(item) for item in [
-                    goal_coord[0],
-                    goal_coord[1],
-                    reward,
-                    _steps_to_goal(distance_to_goal_array),
-                    distance_to_goal_array[-3],
-                    distance_to_goal_array[-2],
-                    distance_to_goal_array[-1],
-                ]
-            ]) + '\n')
-            print(reward)
-            reward_list.append(reward)
-
-          eval_plan_env.close()
-          average_reward_all_goals.append(np.mean(reward_list))
-          print('Average reward:', np.mean(reward_list))
-
-        final_text.close()
-        # to save images while writing to CNS
-        buf = io.BytesIO()
-        plt.savefig(buf, dpi=600, bbox_inches='tight')
-        buf.seek(0)
-        image = tf.io.gfile.GFile(os.path.join(eval_dir, save_label + '.png'), 'w')
-        image.write(buf.read(-1))
-        plt.clf()
-
-        # for iter_idx in range(1, actual_coords.shape[0]):
-        #   _, ax1 = plt.subplots(1, 1)
-        #   ax1.set_xlim(-2, 15)
-        #   ax1.set_ylim(-2, 15)
-        #   ax1.plot(
-        #       actual_coords[:iter_idx, 0],
-        #       actual_coords[:iter_idx, 1],
-        #       linewidth=1.2)
-        #   ax1.scatter(
-        #       np.array(goal_coord_list)[:, 0],
-        #       np.array(goal_coord_list)[:, 1],
-        #       marker='x',
-        #       color='k')
-        #   buf = io.BytesIO()
-        #   plt.savefig(buf, dpi=200, bbox_inches='tight')
-        #   buf.seek(0)
-        #   image = tf.io.gfile.GFile(
-        #       os.path.join(eval_dir,
-        #                    save_label + '_' + '%04d' % (iter_idx) + '.png'),
-        #       'w')
-        #   image.write(buf.read(-1))
-        #   plt.clf()
-
-        plt.close()
-        print('Average reward for all goals:', average_reward_all_goals)
+        eval_plan_env = get_environment(env_name=FLAGS.environment + '_goal')
+        video_env = video_wrapper.VideoWrapper(env=eval_plan_env,
+                                               base_path=os.path.join(log_dir, "videos", "final_eval"),
+                                               base_name="final-mpc")
+        reward, actual_coords, primitives, distance_to_goal_array = planning_fn(
+          video_env, agent.skill_dynamics, eval_policy,
+          latent_action_space_size=FLAGS.num_skills,
+          episode_horizon=FLAGS.max_env_steps,
+          planning_horizon=FLAGS.planning_horizon,
+          primitive_horizon=FLAGS.primitive_horizon,
+          num_candidate_sequences=FLAGS.num_candidate_sequences,
+          refine_steps=FLAGS.refine_steps,
+          mppi_gamma=FLAGS.mppi_gamma,
+          prior_type=FLAGS.prior_type,
+          smoothing_beta=FLAGS.smoothing_beta,
+          top_primitives=FLAGS.top_primitives
+        )
+        video_env.close()
+        print('Average reward:', reward)
 
 
 if __name__ == '__main__':
