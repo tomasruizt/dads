@@ -52,9 +52,10 @@ class LongishEnv(Env):
         fig.canvas.flush_events()
 
 
-def new_VAE(state_space_dim: int, latent_space_dim: int, batch_size: int,
-            samples_generator: Callable):
-    layer_size = 128
+def new_VAE(state_space_dim: int, batch_size: int,
+            samples_generator: Callable[[int], np.ndarray]):
+    latent_space_dim = 6
+    layer_size = 256
     activation = "tanh"
 
     prior = tfp.distributions.MultivariateNormalDiag(loc=tf.zeros(latent_space_dim))
@@ -81,30 +82,34 @@ def new_VAE(state_space_dim: int, latent_space_dim: int, batch_size: int,
     VAE = tfk.Model(inputs=encoder.inputs, outputs=decoder(encoder.outputs[0]))
     VAE.compile(loss="mse")
 
-    return VAE, encoder, decoder
+    mean = tf.reduce_mean
+
+    @tf.function
+    def get_state_density(s: np.ndarray):
+        support = encoder(samples_generator(500))
+
+        @tf.function
+        def prob(z):
+            return mean(support.prob(z))
+
+        return tf.map_fn(prob, encoder(s).mean())
+
+    return VAE, get_state_density
 
 
 def collect_samples(env, num_episodes: int):
-    buffer = []
+    samples = []
     for _ in range(num_episodes):
         env.reset()
         for _ in range(50):
             obs, *_ = env.step(env.action_space.sample())
-            buffer.append(obs)
-    return np.asarray(buffer)
+            samples.append(obs)
+    return np.asarray(samples)
 
 
 def sample(array: np.ndarray, n: int) -> np.ndarray:
     indices = np.random.choice(len(array), n)
     return array[indices]
-
-
-def get_state_density(s: np.ndarray, encoder, buffer: np.ndarray, vectorized=False):
-    mean = tf.reduce_mean
-    support = encoder(sample(buffer, 200))
-    if not vectorized:
-        return mean(support.prob(encoder(s))).numpy()
-    return np.asarray([mean(support.prob(z)) for z in encoder(s).mean()])
 
 
 def viz_probabilites(states: np.ndarray, actual_probs: np.ndarray, pred_probs: np.ndarray):
@@ -118,16 +123,14 @@ def viz_probabilites(states: np.ndarray, actual_probs: np.ndarray, pred_probs: n
 if __name__ == '__main__':
     env = LongishEnv()
     state_space_dim = env.observation_space.shape[0]
-    latent_space_dim = 6
     batch_size = 32
 
     buffer = collect_samples(env=env, num_episodes=1000)
 
-    VAE, encoder, decoder = new_VAE(
+    VAE, get_state_density = new_VAE(
         state_space_dim=state_space_dim,
-        latent_space_dim=latent_space_dim,
         batch_size=batch_size,
-        samples_generator=lambda: sample(buffer, 200)
+        samples_generator=lambda n: sample(buffer, n)
     )
     model_filename = "density-model-ckpt/"
     if os.path.exists(model_filename):
@@ -138,19 +141,17 @@ if __name__ == '__main__':
     if train:
         ds_size = len(buffer)
         cb = tf.keras.callbacks.ModelCheckpoint(filepath=model_filename, save_weights_only=True)
-        VAE.fit(x=buffer, y=[buffer, buffer], batch_size=batch_size, epochs=3, validation_split=0.2, callbacks=cb)
+        VAE.fit(x=buffer, y=[buffer, buffer], batch_size=batch_size, epochs=10, validation_split=0.2, callbacks=cb)
 
-    buffer_samples = buffer[np.random.choice(len(buffer), 500)]
+    buffer_samples = buffer[np.random.choice(len(buffer), 2000)]
     state_pred = VAE(buffer_samples)
     env.render("human", more_pts={"blue": buffer_samples, "orange": state_pred.numpy()})
 
-    grid_granularity = 30
+    grid_granularity = 100
     X, Y = np.mgrid[-2:2:complex(0, grid_granularity), -1:1:complex(0, grid_granularity)]
     pts = np.asarray([X.ravel(), Y.ravel()]).T
 
-    p = {}
-    p["s"] = partial(get_state_density, encoder=encoder, buffer=buffer, vectorized=True)
-    pts_probs = p["s"](pts)
+    pts_probs = get_state_density(pts).numpy()
 
     Z = pts_probs.reshape(grid_granularity, grid_granularity)
     plt.contourf(X, Y, Z, cmap='Blues', zorder=-1)
