@@ -52,49 +52,48 @@ class LongishEnv(Env):
         fig.canvas.flush_events()
 
 
-def new_VAE(state_space_dim: int, batch_size: int,
-            samples_generator: Callable[[int], np.ndarray]):
-    latent_space_dim = 6
-    layer_size = 256
-    activation = "tanh"
+class DensityEstimator:
+    def __init__(self, state_space_dim: int, batch_size: int,
+                 samples_generator: Callable[[int], np.ndarray]):
+        latent_space_dim = 6
+        layer_size = 256
+        activation = "tanh"
 
-    prior = tfp.distributions.MultivariateNormalDiag(loc=tf.zeros(latent_space_dim))
-    encoder = tfk.Sequential([
-        tfk.layers.InputLayer(input_shape=[state_space_dim]),
-        tfk.layers.Dense(units=layer_size, activation=activation),
-        tfk.layers.Dense(units=layer_size, activation=activation),
-        tfk.layers.Dense(units=layer_size, activation=activation),
-        tfk.layers.Dense(units=tfp.layers.MultivariateNormalTriL.params_size(latent_space_dim)),
-        tfp.layers.MultivariateNormalTriL(
-            event_size=latent_space_dim,
-            activity_regularizer=tfp.layers.KLDivergenceRegularizer(prior, weight=1/batch_size, use_exact_kl=True),
-        )
-    ])
+        prior = tfp.distributions.MultivariateNormalDiag(loc=tf.zeros(latent_space_dim))
+        self._encoder = encoder = tfk.Sequential([
+            tfk.layers.InputLayer(input_shape=[state_space_dim]),
+            tfk.layers.Dense(units=layer_size, activation=activation),
+            tfk.layers.Dense(units=layer_size, activation=activation),
+            tfk.layers.Dense(units=layer_size, activation=activation),
+            tfk.layers.Dense(units=tfp.layers.MultivariateNormalTriL.params_size(latent_space_dim)),
+            tfp.layers.MultivariateNormalTriL(
+                event_size=latent_space_dim,
+                activity_regularizer=tfp.layers.KLDivergenceRegularizer(prior, weight=1/batch_size, use_exact_kl=True),
+            )
+        ])
 
-    decoder = tfk.Sequential([
-        tfk.layers.InputLayer(input_shape=[latent_space_dim]),
-        tfk.layers.Dense(units=layer_size, activation=activation),
-        tfk.layers.Dense(units=layer_size, activation=activation),
-        tfk.layers.Dense(units=layer_size, activation=activation),
-        tfk.layers.Dense(units=state_space_dim),
-    ])
+        self._decoder = decoder = tfk.Sequential([
+            tfk.layers.InputLayer(input_shape=[latent_space_dim]),
+            tfk.layers.Dense(units=layer_size, activation=activation),
+            tfk.layers.Dense(units=layer_size, activation=activation),
+            tfk.layers.Dense(units=layer_size, activation=activation),
+            tfk.layers.Dense(units=state_space_dim),
+        ])
 
-    VAE = tfk.Model(inputs=encoder.inputs, outputs=decoder(encoder.outputs[0]))
-    VAE.compile(loss="mse")
+        self.VAE = tfk.Model(inputs=encoder.inputs, outputs=decoder(encoder.outputs[0]))
+        self.VAE.compile(loss="mse")
 
-    mean = tf.reduce_mean
+        self._samples_generator = samples_generator
 
     @tf.function
-    def get_state_density(s: np.ndarray):
-        support = encoder(samples_generator(500))
+    def get_state_density(self, s: np.ndarray):
+        support = self._encoder(self._samples_generator(500))
 
         @tf.function
         def prob(z):
-            return mean(support.prob(z))
+            return tf.reduce_mean(support.prob(z))
 
-        return tf.map_fn(prob, encoder(s).mean())
-
-    return VAE, get_state_density
+        return tf.map_fn(prob, self._encoder(s).mean())
 
 
 def collect_samples(env, num_episodes: int):
@@ -133,25 +132,25 @@ if __name__ == '__main__':
 
     buffer = collect_samples(env=env, num_episodes=1000)
 
-    VAE, get_state_density = new_VAE(
+    model = DensityEstimator(
         state_space_dim=state_space_dim,
         batch_size=batch_size,
         samples_generator=lambda n: sample(buffer, n)
     )
     model_filename = "density-model-ckpt/"
     if os.path.exists(model_filename):
-        VAE.load_weights(filepath=model_filename)
+        model.VAE.load_weights(filepath=model_filename)
 
     train = False
 
     if train:
         cb = tf.keras.callbacks.ModelCheckpoint(filepath=model_filename, save_weights_only=True)
-        VAE.fit(x=buffer, y=[buffer, buffer], batch_size=batch_size, epochs=10, validation_split=0.2, callbacks=cb)
+        model.VAE.fit(x=buffer, y=[buffer, buffer], batch_size=batch_size, epochs=10, validation_split=0.2, callbacks=cb)
 
     buffer_samples = buffer[np.random.choice(len(buffer), 2000)]
-    state_pred = VAE(buffer_samples)
+    state_pred = model.VAE(buffer_samples)
     env.render("human", more_pts={"blue": buffer_samples, "orange": state_pred.numpy()})
 
-    viz_grid_probabilites(prob_fn=lambda pts: get_state_density(pts).numpy())
+    viz_grid_probabilites(prob_fn=lambda pts: model.get_state_density(pts).numpy())
     input("Exit")
     exit()
