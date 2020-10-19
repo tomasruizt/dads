@@ -112,12 +112,18 @@ def sample(array: np.ndarray, n: int) -> np.ndarray:
     return array[indices]
 
 
-def viz_probabilites(states: np.ndarray, actual_probs: np.ndarray, pred_probs: np.ndarray):
-    fig, axs = plt.subplots(2, 1)
-    axs[0].tricontourf(*states.T, actual_probs)
-    axs[1].tricontourf(*states.T, pred_probs)
-    fig.canvas.draw()
-    fig.canvas.flush_events()
+def viz_grid_probabilites(prob_fn: Callable[[np.ndarray], np.ndarray]):
+    grid_granularity = 100
+    X, Y = np.mgrid[-2:2:complex(0, grid_granularity), -1:1:complex(0, grid_granularity)]
+    pts = np.asarray([X.ravel(), Y.ravel()]).T
+
+    pts_probs = prob_fn(pts)
+
+    Z = pts_probs.reshape(grid_granularity, grid_granularity)
+    fig, ax = plt.subplots()
+    ax.contourf(X, Y, Z, cmap='Blues', zorder=-1)
+    ax.contour(X, Y, Z, zorder=-1)
+    fig.show()
 
 
 if __name__ == '__main__':
@@ -136,10 +142,9 @@ if __name__ == '__main__':
     if os.path.exists(model_filename):
         VAE.load_weights(filepath=model_filename)
 
-    train = True
+    train = False
 
     if train:
-        ds_size = len(buffer)
         cb = tf.keras.callbacks.ModelCheckpoint(filepath=model_filename, save_weights_only=True)
         VAE.fit(x=buffer, y=[buffer, buffer], batch_size=batch_size, epochs=10, validation_split=0.2, callbacks=cb)
 
@@ -147,16 +152,6 @@ if __name__ == '__main__':
     state_pred = VAE(buffer_samples)
     env.render("human", more_pts={"blue": buffer_samples, "orange": state_pred.numpy()})
 
-    grid_granularity = 100
-    X, Y = np.mgrid[-2:2:complex(0, grid_granularity), -1:1:complex(0, grid_granularity)]
-    pts = np.asarray([X.ravel(), Y.ravel()]).T
-
-    pts_probs = get_state_density(pts).numpy()
-
-    Z = pts_probs.reshape(grid_granularity, grid_granularity)
-    plt.contourf(X, Y, Z, cmap='Blues', zorder=-1)
-    plt.contour(X, Y, Z, zorder=-1)
-    plt.show()
-
+    viz_grid_probabilites(prob_fn=lambda pts: get_state_density(pts).numpy())
     input("Exit")
     exit()
