@@ -12,6 +12,6 @@ class FixedGoalFetchPickAndPlaceEnv(FetchPickAndPlaceEnv):
 
 
 def make_fetch_pick_and_place_env():
-    filter_obs = partial(FilterObservation, filter_keys=["observation", "achieved_goal"])
+    filter_obs = partial(FilterObservation, filter_keys=["observation"])
     env = FixedGoalFetchPickAndPlaceEnv(reward_type="dense")
     return FlattenObservation(filter_obs(env))
