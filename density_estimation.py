@@ -85,7 +85,7 @@ class DensityEstimator:
 
         self._samples_generator = samples_generator
 
-    @tf.function
+    @tf.function(experimental_relax_shapes=True)
     def get_state_density(self, s: np.ndarray):
         support = self._encoder(self._samples_generator(500))
 
@@ -141,11 +141,10 @@ if __name__ == '__main__':
     if os.path.exists(model_filename):
         model.VAE.load_weights(filepath=model_filename)
 
-    train = False
-
+    train = True
     if train:
         cb = tf.keras.callbacks.ModelCheckpoint(filepath=model_filename, save_weights_only=True)
-        model.VAE.fit(x=buffer, y=[buffer, buffer], batch_size=batch_size, epochs=10, validation_split=0.2, callbacks=cb)
+        model.VAE.fit(x=buffer, y=buffer, batch_size=batch_size, epochs=3, validation_split=0.2, callbacks=cb)
 
     buffer_samples = buffer[np.random.choice(len(buffer), 2000)]
     state_pred = model.VAE(buffer_samples)
