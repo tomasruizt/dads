@@ -21,11 +21,14 @@ import time
 import pickle as pkl
 import os
 import io
+from typing import Callable, List
+import gtimer as gt
 from absl import flags, logging
 import functools
 
 import sys
 
+from density_estimation import DensityEstimator, sample
 from envs.fetch import make_fetch_pick_and_place_env
 from envs.point2d_env import make_point2d_env
 
@@ -44,7 +47,7 @@ from tf_agents.agents.sac import sac_agent
 from tf_agents.environments import suite_mujoco
 from tf_agents.trajectories import time_step as ts
 from tf_agents.environments.suite_gym import wrap_env
-from tf_agents.trajectories.trajectory import from_transition, to_transition
+from tf_agents.trajectories.trajectory import from_transition, to_transition, Trajectory
 from tf_agents.networks import actor_distribution_network
 from tf_agents.networks import normal_projection_network
 from tf_agents.policies import ou_noise_policy
@@ -1048,6 +1051,43 @@ def eval_mppi(
       chosen_primitives), distance_to_goal_array
 
 
+class UniformResampler:
+    def __init__(self, buffer: py_uniform_replay_buffer.PyUniformReplayBuffer, tf_graph: tf.Graph):
+        self._buffer = buffer
+        with tf_graph.as_default():
+            self._estimator = DensityEstimator(
+                state_space_dim=buffer.data_spec.observation.shape[0] - FLAGS.num_skills,
+                batch_size=FLAGS.agent_batch_size,
+                samples_generator=lambda n: self._get_obs(buffer.get_next(n, num_steps=2))
+            )
+        self.tf_session = None
+
+    @staticmethod
+    def _get_obs(trajectory: Trajectory) -> np.ndarray:
+        return trajectory.observation[:, 0, :-FLAGS.num_skills]
+
+    def resample(self, num_batches: int, batch_size: int,
+                 from_trajectory: Trajectory = None) -> List[Trajectory]:
+        if from_trajectory is None:
+            from_trajectory = self._buffer.get_next(num_batches*batch_size, num_steps=2)
+        states = self._get_obs(from_trajectory)
+
+        probs = self.tf_session.run(self._estimator.get_state_density(s=states))
+        importance_sampling_weights = 1 / probs.astype(np.float64)
+        resampling_probs = importance_sampling_weights / sum(importance_sampling_weights)
+
+        all_indices = np.random.choice(len(states), size=(num_batches, batch_size), p=resampling_probs)
+        return [self.filter_trajectory(from_trajectory, indices) for indices in all_indices]
+
+    def train_density(self) -> None:
+        states = self._get_obs(self._buffer.get_next(128*10, num_steps=2))
+        self._estimator.VAE.fit(x=states, y=states, verbose=0)
+
+    @staticmethod
+    def filter_trajectory(trajectory: Trajectory, indices: np.ndarray) -> Trajectory:
+        return tf.nest.map_structure(lambda trj: trj[indices], trajectory)
+
+
 def main(_):
   # setting up
   start_time = time.time()
@@ -1212,6 +1252,8 @@ def main(_):
     rbuffer = py_uniform_replay_buffer.PyUniformReplayBuffer(
         capacity=capacity, data_spec=trajectory_spec)
 
+    uniform_resampler = UniformResampler(buffer=rbuffer, tf_graph=agent._graph)
+
     if FLAGS.train_skill_dynamics_on_policy:
       # for on-policy data (if something special is required)
       on_buffer = py_uniform_replay_buffer.PyUniformReplayBuffer(
@@ -1245,6 +1287,7 @@ def main(_):
       rb_checkpointer.initialize_or_restore(sess)
       agent.set_sessions(
           initialize_or_restore_skill_dynamics=True, session=sess)
+      uniform_resampler.tf_session = sess
 
       meta_start_time = time.time()
       if FLAGS.run_train:
@@ -1291,8 +1334,8 @@ def main(_):
           initial_collect_time = time.time() - start_time
           print('Initial data collection time:', initial_collect_time)
 
-        agent_end_train_time = time.time()
         while iter_count < FLAGS.num_epochs:
+          agent_end_train_time = time.time()
           print('iteration index:', iter_count)
 
           # model save
@@ -1346,16 +1389,33 @@ def main(_):
           if FLAGS.train_skill_dynamics_on_policy:
             skill_dynamics_buffer = on_buffer
 
-          # TODO(architsh): clear_buffer_every_iter needs to fix these as well
-          for _ in range(1 if FLAGS.clear_buffer_every_iter else FLAGS
-                         .skill_dyn_train_steps):
-            if FLAGS.clear_buffer_every_iter:
-              trajectory_sample = rbuffer.gather_all_transitions()
-            else:
-              trajectory_sample = skill_dynamics_buffer.get_next(
-                  sample_batch_size=FLAGS.skill_dyn_batch_size, num_steps=2)
-            trajectory_sample = _filter_trajectories(trajectory_sample)
+          # DENSITY TRAINING
+          gt.reset()
+          uniform_resampler.train_density()
+          gt.stamp("density train time", unique=False, quick_print=True)
 
+          def sample_trajs(num_batches: int, batch_size: int) -> List[Trajectory]:
+              if FLAGS.clear_buffer_every_iter:
+                  traj_list = [_filter_trajectories(rbuffer.gather_all_transitions())]
+              else:
+                  large_trajectory = skill_dynamics_buffer.get_next(
+                      sample_batch_size=FLAGS.skill_dyn_batch_size*FLAGS.skill_dyn_train_steps,
+                      num_steps=2
+                  )
+                  large_trajectory = _filter_trajectories(large_trajectory)
+                  traj_list = uniform_resampler.resample(
+                      num_batches=num_batches,
+                      batch_size=batch_size,
+                      from_trajectory=large_trajectory
+                  )
+              return traj_list
+
+          # DYNAMICS TRAINING
+          trajectories_list = sample_trajs(num_batches=FLAGS.skill_dyn_train_steps, batch_size=FLAGS.skill_dyn_batch_size)
+          gt.stamp("dynamics resample time", unique=False, quick_print=True)
+
+          # TODO(architsh): clear_buffer_every_iter needs to fix these as well
+          for trajectory_sample in trajectories_list:
             # is_weights is None usually, unless relabelling involves importance_sampling
             trajectory_sample, is_weights = relabel_skill(
                 trajectory_sample,
@@ -1387,37 +1447,21 @@ def main(_):
           if FLAGS.train_skill_dynamics_on_policy:
             on_buffer.clear()
 
-          skill_dynamics_end_train_time = time.time()
-          print('skill_dynamics train time:',
-                skill_dynamics_end_train_time - collect_end_time)
+          gt.stamp("skill_dynamics train time", unique=False, quick_print=True)
 
           running_dads_reward, running_logp, running_logp_altz = [], [], []
 
+          # AGENT TRAINING
           # agent train loop analysis
-          within_agent_train_time = time.time()
-          sampling_time_arr, filtering_time_arr, relabelling_time_arr, train_time_arr = [], [], [], []
-          for _ in range(
-              1 if FLAGS.clear_buffer_every_iter else FLAGS.agent_train_steps):
-            if FLAGS.clear_buffer_every_iter:
-              trajectory_sample = rbuffer.gather_all_transitions()
-            else:
-              trajectory_sample = rbuffer.get_next(
-                  sample_batch_size=FLAGS.agent_batch_size, num_steps=2)
+          all_trajs = sample_trajs(num_batches=FLAGS.agent_train_steps, batch_size=FLAGS.agent_batch_size)
+          gt.stamp("agent resample time", unique=False, quick_print=True)
 
-            buffer_sampling_time = time.time()
-            sampling_time_arr.append(buffer_sampling_time -
-                                     within_agent_train_time)
-            trajectory_sample = _filter_trajectories(trajectory_sample)
-
-            filtering_time = time.time()
-            filtering_time_arr.append(filtering_time - buffer_sampling_time)
+          for trajectory_sample in all_trajs:
             trajectory_sample, _ = relabel_skill(
                 trajectory_sample,
                 relabel_type=FLAGS.agent_relabel_type,
                 cur_policy=relabel_policy,
                 cur_skill_dynamics=agent.skill_dynamics)
-            relabelling_time = time.time()
-            relabelling_time_arr.append(relabelling_time - filtering_time)
 
             # need to match the assert structure
             if FLAGS.skill_dynamics_relabel_type is not None and 'importance_sampling' in FLAGS.skill_dynamics_relabel_type:
@@ -1436,20 +1480,12 @@ def main(_):
                   batch_size=FLAGS.agent_batch_size,
                   num_steps=FLAGS.agent_train_steps)
 
-            within_agent_train_time = time.time()
-            train_time_arr.append(within_agent_train_time - relabelling_time)
             if dads_reward is not None:
               running_dads_reward.append(dads_reward)
               running_logp.append(info['logp'])
               running_logp_altz.append(info['logp_altz'])
 
-          agent_end_train_time = time.time()
-          print('agent train time:',
-                agent_end_train_time - skill_dynamics_end_train_time)
-          print('\t sampling time:', np.sum(sampling_time_arr))
-          print('\t filtering_time:', np.sum(filtering_time_arr))
-          print('\t relabelling time:', np.sum(relabelling_time_arr))
-          print('\t train_time:', np.sum(train_time_arr))
+          gt.stamp('agent train time:', unique=False, quick_print=True)
 
           if len(episode_size_buffer) > 1:
             train_writer.add_summary(
@@ -1503,7 +1539,9 @@ def main(_):
             episode_return_buffer = [0.]
 
           # within train loop evaluation
-          if FLAGS.record_freq is not None and iter_count % FLAGS.record_freq == 0:
+          if (FLAGS.record_freq is not None and
+              iter_count % FLAGS.record_freq == 0 and
+              iter_count > 0):
             cur_vid_dir = os.path.join(log_dir, 'videos', str(iter_count))
             tf.io.gfile.makedirs(cur_vid_dir)
             eval_loop(
