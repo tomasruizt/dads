@@ -1060,32 +1060,34 @@ class UniformResampler:
         self._buffer = buffer
         with tf_graph.as_default():
             self._estimator = DensityEstimator(
-                state_space_dim=buffer.data_spec.observation.shape[0] - FLAGS.num_skills,
-                batch_size=FLAGS.agent_batch_size,
-                samples_generator=lambda n: self._get_obs(buffer.get_next(n, num_steps=2))
+                input_dim=buffer.data_spec.observation.shape[0] - FLAGS.num_skills,
+                vae_training_batch_size=FLAGS.agent_batch_size,
+                samples_generator=lambda n: self._get_state_deltas(buffer.get_next(n, num_steps=2))
             )
         self.tf_session = None
 
     @staticmethod
-    def _get_obs(trajectory: Trajectory) -> np.ndarray:
-        return trajectory.observation[:, 0, :-FLAGS.num_skills]
+    def _get_state_deltas(trajectory: Trajectory) -> np.ndarray:
+        state = trajectory.observation[:, 0, :-FLAGS.num_skills]
+        next_state = trajectory.observation[:, 1, :-FLAGS.num_skills]
+        return next_state - state
 
     def resample(self, num_batches: int, batch_size: int,
                  from_trajectory: Trajectory = None) -> List[Trajectory]:
         if from_trajectory is None:
             from_trajectory = self._buffer.get_next(num_batches*batch_size, num_steps=2)
-        states = self._get_obs(from_trajectory)
+        deltas = self._get_state_deltas(from_trajectory)
 
-        probs = self.tf_session.run(self._estimator.get_state_density(s=states))
+        probs = self.tf_session.run(self._estimator.get_input_density(x=deltas))
         importance_sampling_weights = 1 / probs.astype(np.float64)
         resampling_probs = importance_sampling_weights / sum(importance_sampling_weights)
 
-        all_indices = np.random.choice(len(states), size=(num_batches, batch_size), p=resampling_probs)
+        all_indices = np.random.choice(len(deltas), size=(num_batches, batch_size), p=resampling_probs)
         return [self.filter_trajectory(from_trajectory, indices) for indices in all_indices]
 
     def train_density(self) -> None:
-        states = self._get_obs(self._buffer.get_next(128*10, num_steps=2))
-        self._estimator.VAE.fit(x=states, y=states, verbose=0)
+        deltas = self._get_state_deltas(self._buffer.get_next(128 * 10, num_steps=2))
+        self._estimator.VAE.fit(x=deltas, y=deltas, verbose=0)
 
     @staticmethod
     def filter_trajectory(trajectory: Trajectory, indices: np.ndarray) -> Trajectory:
