@@ -111,6 +111,7 @@ flags.DEFINE_integer('run_eval', 0, 'Evaluate learnt skills')
 flags.DEFINE_integer('num_evals', 0, 'Number of skills to evaluate')
 flags.DEFINE_integer('deterministic_eval', 0,
                   'Evaluate all skills, only works for discrete skills')
+flags.DEFINE_integer('per_skill_evals', 1, 'Number of evaluation runs for each skill')
 
 # training
 flags.DEFINE_integer('run_train', 0, 'Train the agent')
@@ -743,7 +744,7 @@ def eval_loop(eval_dir,
             resample_prob=FLAGS.resample_prob),
         max_episode_steps=FLAGS.max_env_steps)
 
-    per_skill_evaluations = 5
+    per_skill_evaluations = FLAGS.per_skill_evals
     predict_trajectory_steps = 0
 
     for eval_idx in range(per_skill_evaluations):
@@ -833,8 +834,11 @@ def eval_planning(env,
       cur_coord_predicted.append(np.expand_dims(predicted_next_state[:, :2], 1))
 
       # update running stuff
+      kwargs = dict()
+      if "info" in inspect.signature(env.compute_reward).parameters:
+          kwargs["info"] = None
       running_reward += env.compute_reward(running_cur_state,
-                                           predicted_next_state)
+                                           predicted_next_state, **kwargs)
       running_cur_state = predicted_next_state
 
     predicted_coords.append(np.concatenate(cur_coord_predicted, axis=1))
