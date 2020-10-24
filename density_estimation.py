@@ -1,6 +1,4 @@
 import os
-import time
-from functools import partial
 from typing import Callable
 
 import gym
@@ -87,13 +85,9 @@ class DensityEstimator:
 
     @tf.function(experimental_relax_shapes=True)
     def get_state_density(self, s: np.ndarray):
-        support = self._encoder(self._samples_generator(500))
-
-        @tf.function
-        def prob(z):
-            return tf.reduce_mean(support.prob(z))
-
-        return tf.map_fn(prob, self._encoder(s).mean())
+        zs = self._encoder(s).mean()
+        approx_latent_distr = self._encoder(self._samples_generator(500))
+        return tf.reduce_mean(approx_latent_distr.prob(zs[..., None, :]), axis=1)
 
 
 def collect_samples(env, num_episodes: int):
