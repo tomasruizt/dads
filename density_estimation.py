@@ -51,7 +51,7 @@ class LongishEnv(Env):
 
 
 class DensityEstimator:
-    def __init__(self, state_space_dim: int, batch_size: int,
+    def __init__(self, input_dim: int, vae_training_batch_size: int,
                  samples_generator: Callable[[int], np.ndarray]):
         latent_space_dim = 6
         layer_size = 256
@@ -59,14 +59,14 @@ class DensityEstimator:
 
         prior = tfp.distributions.MultivariateNormalDiag(loc=tf.zeros(latent_space_dim))
         self._encoder = encoder = tfk.Sequential([
-            tfk.layers.InputLayer(input_shape=[state_space_dim]),
+            tfk.layers.InputLayer(input_shape=[input_dim]),
             tfk.layers.Dense(units=layer_size, activation=activation),
             tfk.layers.Dense(units=layer_size, activation=activation),
             tfk.layers.Dense(units=layer_size, activation=activation),
             tfk.layers.Dense(units=tfp.layers.MultivariateNormalTriL.params_size(latent_space_dim)),
             tfp.layers.MultivariateNormalTriL(
                 event_size=latent_space_dim,
-                activity_regularizer=tfp.layers.KLDivergenceRegularizer(prior, weight=1/batch_size, use_exact_kl=True),
+                activity_regularizer=tfp.layers.KLDivergenceRegularizer(prior, weight=1 / vae_training_batch_size, use_exact_kl=True),
             )
         ])
 
@@ -75,7 +75,7 @@ class DensityEstimator:
             tfk.layers.Dense(units=layer_size, activation=activation),
             tfk.layers.Dense(units=layer_size, activation=activation),
             tfk.layers.Dense(units=layer_size, activation=activation),
-            tfk.layers.Dense(units=state_space_dim),
+            tfk.layers.Dense(units=input_dim),
         ])
 
         self.VAE = tfk.Model(inputs=encoder.inputs, outputs=decoder(encoder.outputs[0]))
@@ -84,8 +84,8 @@ class DensityEstimator:
         self._samples_generator = samples_generator
 
     @tf.function(experimental_relax_shapes=True)
-    def get_state_density(self, s: np.ndarray):
-        zs = self._encoder(s).mean()
+    def get_input_density(self, x: np.ndarray):
+        zs = self._encoder(x).mean()
         approx_latent_distr = self._encoder(self._samples_generator(500))
         return tf.reduce_mean(approx_latent_distr.prob(zs[..., None, :]), axis=1)
 
@@ -127,8 +127,8 @@ if __name__ == '__main__':
     buffer = collect_samples(env=env, num_episodes=1000)
 
     model = DensityEstimator(
-        state_space_dim=state_space_dim,
-        batch_size=batch_size,
+        input_dim=state_space_dim,
+        vae_training_batch_size=batch_size,
         samples_generator=lambda n: sample(buffer, n)
     )
     model_filename = "density-model-ckpt/"
@@ -144,6 +144,6 @@ if __name__ == '__main__':
     state_pred = model.VAE(buffer_samples)
     env.render("human", more_pts={"blue": buffer_samples, "orange": state_pred.numpy()})
 
-    viz_grid_probabilites(prob_fn=lambda pts: model.get_state_density(pts).numpy())
+    viz_grid_probabilites(prob_fn=lambda pts: model.get_input_density(pts).numpy())
     input("Exit")
     exit()
