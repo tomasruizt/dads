@@ -29,7 +29,7 @@ import functools
 import sys
 
 from density_estimation import DensityEstimator, sample
-from envs.fetch import make_fetch_pick_and_place_env
+from envs.fetch import make_fetch_pick_and_place_env, make_fetch_slide_env
 from envs.point2d_env import make_point2d_env
 
 sys.path.append(os.path.abspath('./'))
@@ -247,10 +247,14 @@ def get_environment(env_name='point_mass'):
   global observation_omit_size
   if env_name == 'point2d':
     env = make_point2d_env()
-  elif env_name == "fetch":
+  elif env_name == "pickandplace":
     env = make_fetch_pick_and_place_env()
-  elif env_name == "fetch_goal":
+  elif env_name == "pickandplace_goal":
     return wrap_env(make_fetch_pick_and_place_env(), max_episode_steps=50)
+  elif env_name == "slide":
+    env = make_fetch_slide_env()
+  elif env_name == "slide_goal":
+    return wrap_env(make_fetch_slide_env(), max_episode_steps=50)
   elif env_name == 'Ant-v1':
     env = ant.AntEnv(
         expose_all_qpos=True,
