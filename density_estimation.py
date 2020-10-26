@@ -11,8 +11,6 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 import tensorflow.keras as tfk
 
-from envs.fetch import make_fetch_pick_and_place_env
-
 
 class LongishEnv(Env):
     _corners = np.asarray([(-2, -1), (2, -1), (2, 1), (-2, 1), (-2, -1)])
@@ -66,7 +64,7 @@ class DensityEstimator:
             tfk.layers.Dense(units=tfp.layers.MultivariateNormalTriL.params_size(latent_space_dim)),
             tfp.layers.MultivariateNormalTriL(
                 event_size=latent_space_dim,
-                activity_regularizer=tfp.layers.KLDivergenceRegularizer(prior, weight=1 / vae_training_batch_size, use_exact_kl=True),
+                activity_regularizer=tfp.layers.KLDivergenceRegularizer(prior, weight=0.01, use_exact_kl=True),
             )
         ])
 
@@ -106,6 +104,7 @@ def sample(array: np.ndarray, n: int) -> np.ndarray:
 
 
 def viz_grid_probabilites(prob_fn: Callable[[np.ndarray], np.ndarray]):
+    plt.ion()
     grid_granularity = 100
     X, Y = np.mgrid[-2:2:complex(0, grid_granularity), -1:1:complex(0, grid_granularity)]
     pts = np.asarray([X.ravel(), Y.ravel()]).T
@@ -116,13 +115,14 @@ def viz_grid_probabilites(prob_fn: Callable[[np.ndarray], np.ndarray]):
     fig, ax = plt.subplots()
     ax.contourf(X, Y, Z, cmap='Blues', zorder=-1)
     ax.contour(X, Y, Z, zorder=-1)
-    fig.show()
+    fig.canvas.draw()
+    fig.canvas.flush_events()
 
 
 if __name__ == '__main__':
     env = LongishEnv()
     state_space_dim = env.observation_space.shape[0]
-    batch_size = 32
+    batch_size = 256
 
     buffer = collect_samples(env=env, num_episodes=1000)
 
@@ -131,6 +131,11 @@ if __name__ == '__main__':
         vae_training_batch_size=batch_size,
         samples_generator=lambda n: sample(buffer, n)
     )
+
+    def viz_callback(epoch, *args):
+        if epoch % 5 == 0:
+            viz_grid_probabilites(prob_fn=lambda pts: model.get_input_density(pts).numpy())
+
     model_filename = "density-model-ckpt/"
     if os.path.exists(model_filename):
         model.VAE.load_weights(filepath=model_filename)
@@ -138,12 +143,11 @@ if __name__ == '__main__':
     train = True
     if train:
         cb = tf.keras.callbacks.ModelCheckpoint(filepath=model_filename, save_weights_only=True)
-        model.VAE.fit(x=buffer, y=buffer, batch_size=batch_size, epochs=3, validation_split=0.2, callbacks=cb)
+        cb2 = tf.keras.callbacks.LambdaCallback(on_epoch_end=viz_callback)
+        model.VAE.fit(x=buffer, y=buffer, batch_size=batch_size, epochs=100, validation_split=0.2, callbacks=[cb, cb2])
 
     buffer_samples = buffer[np.random.choice(len(buffer), 2000)]
     state_pred = model.VAE(buffer_samples)
     env.render("human", more_pts={"blue": buffer_samples, "orange": state_pred.numpy()})
 
-    viz_grid_probabilites(prob_fn=lambda pts: model.get_input_density(pts).numpy())
     input("Exit")
-    exit()
