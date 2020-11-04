@@ -1339,7 +1339,7 @@ def main(_):
         video_env = video_wrapper.VideoWrapper(env=eval_plan_env,
                                                base_path=os.path.join(log_dir, "videos", "final_eval"),
                                                base_name="final-mpc")
-        reward, primitives = planning_fn(
+        planning_fn(
           video_env, agent.skill_dynamics, eval_policy,
           latent_action_space_size=FLAGS.num_skills,
           episode_horizon=FLAGS.max_env_steps,
@@ -1353,7 +1353,6 @@ def main(_):
           top_primitives=FLAGS.top_primitives
         )
         video_env.close()
-        print('Average reward:', reward)
 
 
 def gtstamp(name: str):
