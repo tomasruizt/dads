@@ -1102,8 +1102,7 @@ def enter_manual_control_mode(eval_policy: py_tf_policy.PyTFPolicy):
         for _ in range(200):
             skill = widget.get_slider_values()
             timestep = timestep._replace(observation=np.concatenate((timestep.observation, skill)))
-            action_tensor = eval_policy.action(hide_coords(timestep)).action
-            action = clip_action(action_tensor)
+            action = clip_action(eval_policy.action_mean(hide_coords(timestep)))
             timestep = env.step(action)
             env.render("human")
 
