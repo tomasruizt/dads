@@ -31,6 +31,7 @@ import sys
 from density_estimation import DensityEstimator, sample
 from envs.fetch import make_fetch_pick_and_place_env, make_fetch_slide_env
 from envs.point2d_env import make_point2d_env
+from skill_slider import create_sliders_widget
 
 sys.path.append(os.path.abspath('./'))
 
@@ -197,6 +198,7 @@ flags.DEFINE_integer('normalize_data', 1, 'Maintain running averages')
 
 # debug
 flags.DEFINE_integer('debug', 0, 'Creates extra summaries')
+flags.DEFINE_boolean('manual_control', False, 'Pop a slider to control the skills manually.')
 
 # DKitty
 flags.DEFINE_integer('expose_last_action', 1, 'Add the last action to the observation')
@@ -226,7 +228,6 @@ flags.DEFINE_integer('top_primitives', 5, 'Optimization parameter when using uni
 
 # global variables for this script
 observation_omit_size = 0
-goal_coord = np.array([10., 10.])
 sample_count = 0
 iter_count = 0
 episode_size_buffer = []
@@ -265,7 +266,7 @@ def get_environment(env_name='point_mass'):
     return wrap_env(
         ant.AntEnv(
             task='goal',
-            goal=goal_coord,
+            goal=np.array([10., 10.]),
             expose_all_qpos=True),
         max_episode_steps=FLAGS.max_env_steps)
   elif env_name == 'Ant-v1_foot_sensor':
@@ -814,8 +815,6 @@ def eval_planning(env,
                   primitive_horizon=10,
                   **kwargs):
   """env: tf-agents environment without the skill wrapper."""
-  global goal_coord
-
   # assuming only discrete action spaces
   high_level_action_space = np.eye(latent_action_space_size)
   time_step = env.reset()
@@ -872,6 +871,10 @@ def eval_planning(env,
   return actual_reward, actual_coords, predicted_coords
 
 
+def clip_action(action):
+    return np.clip(action, -FLAGS.action_clipping, FLAGS.action_clipping)
+
+
 def eval_mppi(
     env,
     dynamics,
@@ -908,8 +911,6 @@ def eval_mppi(
      (avoid using).
      top_primitives: number of elites to choose, if using CEM (not tested).
   """
-
-  step_idx = 0
 
   def _smooth_primitive_sequences(primitive_sequences):
     for planning_idx in range(1, primitive_sequences.shape[1]):
@@ -1031,23 +1032,18 @@ def eval_mppi(
     #   running_cur_state = predicted_next_state
     # print('Predicted next co-ordinates:', running_cur_state[0, :2])
 
+
+
     for _ in range(primitive_horizon):
       # concatenated observation
-      skill_concat_observation = np.concatenate(
-          [time_step.observation, chosen_primitive], axis=0)
-      next_time_step = env.step(
-          np.clip(
-              policy.action(
-                  hide_coords(
-                      time_step._replace(
-                          observation=skill_concat_observation))).action,
-              -FLAGS.action_clipping, FLAGS.action_clipping))
+      obs_plus_skill = np.concatenate([time_step.observation, chosen_primitive], axis=0)
+      action = policy.action(hide_coords(time_step._replace(observation=obs_plus_skill))).action
+      next_time_step = env.step(clip_action(action))
       actual_reward += next_time_step.reward
       distance_to_goal_array.append(next_time_step.reward)
       # prepare for next iteration
       time_step = next_time_step
       actual_coords.append(np.expand_dims(time_step.observation[:2], 0))
-      step_idx += 1
       # print(step_idx)
     # print('Actual next co-ordinates:', actual_coords[-1])
 
@@ -1090,12 +1086,26 @@ class UniformResampler:
         return [self.filter_trajectory(from_trajectory, indices) for indices in all_indices]
 
     def train_density(self) -> None:
-        deltas = self._get_state_deltas(self._buffer.get_next(128 * 10, num_steps=2))
-        self._estimator.VAE.fit(x=deltas, y=deltas, verbose=0)
+        deltas = self._get_state_deltas(self._buffer.get_next(256 * 20, num_steps=2))
+        self._estimator.VAE.fit(x=deltas, y=deltas, verbose=0, batch_size=256)
 
     @staticmethod
     def filter_trajectory(trajectory: Trajectory, indices: np.ndarray) -> Trajectory:
         return tf.nest.map_structure(lambda trj: trj[indices], trajectory)
+
+
+def enter_manual_control_mode(eval_policy: py_tf_policy.PyTFPolicy):
+    widget = create_sliders_widget(dim=FLAGS.num_skills)
+    env = wrap_env(get_environment(env_name=FLAGS.environment))
+    while True:
+        timestep = env.reset()
+        for _ in range(200):
+            skill = widget.get_slider_values()
+            timestep = timestep._replace(observation=np.concatenate((timestep.observation, skill)))
+            action_tensor = eval_policy.action(hide_coords(timestep)).action
+            action = clip_action(action_tensor)
+            timestep = env.step(action)
+            env.render("human")
 
 
 def main(_):
@@ -1104,7 +1114,7 @@ def main(_):
   tf.compat.v1.enable_resource_variables()
   tf.compat.v1.disable_eager_execution()
   logging.set_verbosity(logging.INFO)
-  global observation_omit_size, goal_coord, sample_count, iter_count, episode_size_buffer, episode_return_buffer
+  global observation_omit_size, sample_count, iter_count, episode_size_buffer, episode_return_buffer
 
   root_dir = os.path.abspath(os.path.expanduser(FLAGS.logdir))
   if not tf.io.gfile.exists(root_dir):
@@ -1327,6 +1337,9 @@ def main(_):
 
           return nest.map_structure(lambda x: x[valid_indices], trajectory)
 
+        if FLAGS.manual_control:
+            return enter_manual_control_mode(eval_policy)
+
         if iter_count == 0:
           start_time = time.time()
           time_step, collect_info = collect_experience(
@@ -1463,10 +1476,9 @@ def main(_):
 
           # AGENT TRAINING
           # agent train loop analysis
-          all_trajs = sample_trajs(num_batches=FLAGS.agent_train_steps, batch_size=FLAGS.agent_batch_size)
-          gt.stamp("agent resample time", unique=False, quick_print=True)
-
-          for trajectory_sample in all_trajs:
+          for _ in range(FLAGS.agent_train_steps):
+            trajectory_sample = rbuffer.get_next(sample_batch_size=FLAGS.agent_batch_size, num_steps=2)
+            trajectory_sample = _filter_trajectories(trajectory_sample)
             trajectory_sample, _ = relabel_skill(
                 trajectory_sample,
                 relabel_type=FLAGS.agent_relabel_type,
