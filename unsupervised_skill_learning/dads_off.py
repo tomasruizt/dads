@@ -165,6 +165,8 @@ flags.DEFINE_float(
     'Clip actions to (-eps, eps) per dimension to avoid difficulties with tanh')
 flags.DEFINE_integer('debug_skill_relabelling', 0,
                      'analysis of skill relabelling')
+flags.DEFINE_boolean("use_dynamics_uniform_resampling", False,
+                     "Train dynamics by resampling uniformly over the possible state deltas.")
 
 # skill dynamics optimization hyperparamaters
 flags.DEFINE_integer('skill_dyn_train_steps', 8,
@@ -1411,30 +1413,37 @@ def main(_):
           if FLAGS.train_skill_dynamics_on_policy:
             skill_dynamics_buffer = on_buffer
 
-          # DENSITY TRAINING
           gt.reset()
-          uniform_resampler.train_density()
-          gt.stamp("density train time", unique=False, quick_print=True)
 
-          def sample_trajs(num_batches: int, batch_size: int) -> List[Trajectory]:
-              if FLAGS.clear_buffer_every_iter:
-                  traj_list = [_filter_trajectories(rbuffer.gather_all_transitions())]
-              else:
-                  large_trajectory = skill_dynamics_buffer.get_next(
-                      sample_batch_size=FLAGS.skill_dyn_batch_size*FLAGS.skill_dyn_train_steps,
-                      num_steps=2
-                  )
-                  large_trajectory = _filter_trajectories(large_trajectory)
-                  traj_list = uniform_resampler.resample(
-                      num_batches=num_batches,
-                      batch_size=batch_size,
-                      from_trajectory=large_trajectory
-                  )
+          # DENSITY TRAINING
+          if FLAGS.use_dynamics_uniform_resampling:
+              uniform_resampler.train_density()
+              gtstamp("density train time")
+
+          def resample_trajs(num_batches: int, batch_size: int) -> List[Trajectory]:
+              large_trajectory = skill_dynamics_buffer.get_next(
+                  sample_batch_size=FLAGS.skill_dyn_batch_size*FLAGS.skill_dyn_train_steps,
+                  num_steps=2
+              )
+              large_trajectory = _filter_trajectories(large_trajectory)
+              traj_list = uniform_resampler.resample(
+                  num_batches=num_batches,
+                  batch_size=batch_size,
+                  from_trajectory=large_trajectory
+              )
               return traj_list
 
           # DYNAMICS TRAINING
-          trajectories_list = sample_trajs(num_batches=FLAGS.skill_dyn_train_steps, batch_size=FLAGS.skill_dyn_batch_size)
-          gt.stamp("dynamics resample time", unique=False, quick_print=True)
+          if FLAGS.clear_buffer_every_iter:
+              trajectories_list = [_filter_trajectories(rbuffer.gather_all_transitions())]
+          elif FLAGS.use_dynamics_uniform_resampling:
+              trajectories_list = resample_trajs(num_batches=FLAGS.skill_dyn_train_steps, batch_size=FLAGS.skill_dyn_batch_size)
+              gtstamp("dynamics (re)sampling time")
+          else:
+              def get_batch():
+                  return skill_dynamics_buffer.get_next(sample_batch_size=FLAGS.skill_dyn_batch_size, num_steps=2)
+              trajectories_list = [get_batch() for _ in range(FLAGS.skill_dyn_train_steps)]
+              gtstamp("dynamics sampling time")
 
           # TODO(architsh): clear_buffer_every_iter needs to fix these as well
           for trajectory_sample in trajectories_list:
@@ -1469,7 +1478,7 @@ def main(_):
           if FLAGS.train_skill_dynamics_on_policy:
             on_buffer.clear()
 
-          gt.stamp("skill_dynamics train time", unique=False, quick_print=True)
+          gtstamp("skill_dynamics train time")
 
           running_dads_reward, running_logp, running_logp_altz = [], [], []
 
@@ -1506,7 +1515,7 @@ def main(_):
               running_logp.append(info['logp'])
               running_logp_altz.append(info['logp_altz'])
 
-          gt.stamp('agent train time:', unique=False, quick_print=True)
+          gtstamp('agent train time:')
 
           if len(episode_size_buffer) > 1:
             train_writer.add_summary(
@@ -1625,6 +1634,10 @@ def main(_):
         )
         video_env.close()
         print('Average reward:', reward)
+
+
+def gtstamp(name: str):
+    gt.stamp(name, unique=False, quick_print=True)
 
 
 if __name__ == '__main__':
