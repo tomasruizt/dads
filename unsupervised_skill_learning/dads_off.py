@@ -16,22 +16,23 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import inspect
 import time
-import pickle as pkl
 import os
 import io
-from typing import Callable, List
+from functools import partial
+from typing import List
 import gtimer as gt
 from absl import flags, logging
-import functools
 
 import sys
 
-from density_estimation import DensityEstimator, sample
+from density_estimation import DensityEstimator
 from envs.fetch import make_fetch_pick_and_place_env, make_fetch_slide_env
 from envs.point2d_env import make_point2d_env
 from skill_slider import create_sliders_widget
+from unsupervised_skill_learning.common_funcs import process_observation_given, \
+    hide_coordinates, clip
+from unsupervised_skill_learning.mppi import eval_mppi
 
 sys.path.append(os.path.abspath('./'))
 
@@ -41,20 +42,17 @@ matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
-import tensorflow_probability as tfp
 
 from tf_agents.agents.ddpg import critic_network
 from tf_agents.agents.sac import sac_agent
 from tf_agents.environments import suite_mujoco
 from tf_agents.trajectories import time_step as ts
 from tf_agents.environments.suite_gym import wrap_env
-from tf_agents.trajectories.trajectory import from_transition, to_transition, Trajectory
+from tf_agents.trajectories.trajectory import from_transition, Trajectory
 from tf_agents.networks import actor_distribution_network
 from tf_agents.networks import normal_projection_network
 from tf_agents.policies import ou_noise_policy
 from tf_agents.trajectories import policy_step
-# from tf_agents.policies import py_tf_policy
-# from tf_agents.replay_buffers import py_uniform_replay_buffer
 from tf_agents.specs import array_spec
 from tf_agents.specs import tensor_spec
 from tf_agents.utils import common
@@ -319,13 +317,10 @@ def get_environment(env_name='point_mass'):
     env = suite_mujoco.load(env_name)
   return env
 
-def hide_coords(time_step):
-  global observation_omit_size
-  if observation_omit_size > 0:
-    sans_coords = time_step.observation[observation_omit_size:]
-    return time_step._replace(observation=sans_coords)
 
-  return time_step
+def hide_coords(time_step):
+    global observation_omit_size
+    return hide_coordinates(time_step=time_step, first_n=observation_omit_size)
 
 
 def relabel_skill(trajectory_sample,
@@ -466,114 +461,9 @@ def relabel_skill(trajectory_sample,
 
 # hard-coding the state-space for dynamics
 def process_observation(observation):
-
-  def _shape_based_observation_processing(observation, dim_idx):
-    if len(observation.shape) == 1:
-      return observation[dim_idx:dim_idx + 1]
-    elif len(observation.shape) == 2:
-      return observation[:, dim_idx:dim_idx + 1]
-    elif len(observation.shape) == 3:
-      return observation[:, :, dim_idx:dim_idx + 1]
-
-  # for consistent use
-  if FLAGS.reduced_observation == 0:
-    return observation
-
-  # process observation for dynamics with reduced observation space
-  if FLAGS.environment == 'HalfCheetah-v1':
-    qpos_dim = 9
-  elif FLAGS.environment == 'Ant-v1':
-    qpos_dim = 15
-  elif FLAGS.environment == 'Humanoid-v1':
-    qpos_dim = 26
-  elif 'DKitty' in FLAGS.environment:
-    qpos_dim = 36
-
-  # x-axis
-  if FLAGS.reduced_observation in [1, 5]:
-    red_obs = [_shape_based_observation_processing(observation, 0)]
-  # x-y plane
-  elif FLAGS.reduced_observation in [2, 6]:
-    if FLAGS.environment == 'Ant-v1' or 'DKitty' in FLAGS.environment or 'DClaw' in FLAGS.environment:
-      red_obs = [
-          _shape_based_observation_processing(observation, 0),
-          _shape_based_observation_processing(observation, 1)
-      ]
-    else:
-      red_obs = [
-          _shape_based_observation_processing(observation, 0),
-          _shape_based_observation_processing(observation, qpos_dim)
-      ]
-  # x-y plane, x-y velocities
-  elif FLAGS.reduced_observation in [4, 8]:
-    if FLAGS.reduced_observation == 4 and 'DKittyPush' in FLAGS.environment:
-      # position of the agent + relative position of the box
-      red_obs = [
-          _shape_based_observation_processing(observation, 0),
-          _shape_based_observation_processing(observation, 1),
-          _shape_based_observation_processing(observation, 3),
-          _shape_based_observation_processing(observation, 4)
-      ]
-    elif FLAGS.environment in ['Ant-v1']:
-      red_obs = [
-          _shape_based_observation_processing(observation, 0),
-          _shape_based_observation_processing(observation, 1),
-          _shape_based_observation_processing(observation, qpos_dim),
-          _shape_based_observation_processing(observation, qpos_dim + 1)
-      ]
-
-  # (x, y, orientation), works only for ant, point_mass
-  elif FLAGS.reduced_observation == 3:
-    if FLAGS.environment in ['Ant-v1', 'point_mass']:
-      red_obs = [
-          _shape_based_observation_processing(observation, 0),
-          _shape_based_observation_processing(observation, 1),
-          _shape_based_observation_processing(observation,
-                                              observation.shape[1] - 1)
-      ]
-    # x, y, z of the center of the block
-    elif FLAGS.environment in ['HandBlock']:
-      red_obs = [
-          _shape_based_observation_processing(observation, 
-                                              observation.shape[-1] - 7),
-          _shape_based_observation_processing(observation, 
-                                              observation.shape[-1] - 6),
-          _shape_based_observation_processing(observation,
-                                              observation.shape[-1] - 5)
-      ]
-
-  if FLAGS.reduced_observation in [5, 6, 8]:
-    red_obs += [
-        _shape_based_observation_processing(observation,
-                                            observation.shape[1] - idx)
-        for idx in range(1, 5)
-    ]
-
-  if FLAGS.reduced_observation == 36 and 'DKitty' in FLAGS.environment:
-    red_obs = [
-        _shape_based_observation_processing(observation, idx)
-        for idx in range(qpos_dim)
-    ]
-
-  # x, y, z and the rotation quaternion
-  if FLAGS.reduced_observation == 7 and FLAGS.environment == 'HandBlock':
-    red_obs = [
-        _shape_based_observation_processing(observation, observation.shape[-1] - idx)
-        for idx in range(1, 8)
-    ][::-1]
-
-  # the rotation quaternion
-  if FLAGS.reduced_observation == 4 and FLAGS.environment == 'HandBlock':
-    red_obs = [
-        _shape_based_observation_processing(observation, observation.shape[-1] - idx)
-        for idx in range(1, 5)
-    ][::-1]
-
-  if isinstance(observation, np.ndarray):
-    input_obs = np.concatenate(red_obs, axis=len(observation.shape) - 1)
-  elif isinstance(observation, tf.Tensor):
-    input_obs = tf.concat(red_obs, axis=len(observation.shape) - 1)
-  return input_obs
+  reduced_observation = FLAGS.reduced_observation
+  environment = FLAGS.environment
+  return process_observation_given(observation, environment, reduced_observation)
 
 
 def collect_experience(py_env,
@@ -822,7 +712,6 @@ def eval_planning(env,
   time_step = env.reset()
 
   actual_reward = 0.
-  actual_coords = [np.expand_dims(time_step.observation[:2], 0)]
   predicted_coords = []
 
   # planning loop
@@ -839,11 +728,7 @@ def eval_planning(env,
       cur_coord_predicted.append(np.expand_dims(predicted_next_state[:, :2], 1))
 
       # update running stuff
-      kwargs = dict()
-      if "info" in inspect.signature(env.compute_reward).parameters:
-          kwargs["info"] = None
-      running_reward += env.compute_reward(running_cur_state,
-                                           predicted_next_state, **kwargs)
+      running_reward += env.compute_reward(running_cur_state, predicted_next_state, info="dads")
       running_cur_state = predicted_next_state
 
     predicted_coords.append(np.concatenate(cur_coord_predicted, axis=1))
@@ -867,194 +752,12 @@ def eval_planning(env,
 
       # prepare for next iteration
       time_step = next_time_step
-      actual_coords.append(np.expand_dims(time_step.observation[:2], 0))
 
-  actual_coords = np.concatenate(actual_coords)
-  return actual_reward, actual_coords, predicted_coords
+  return actual_reward, predicted_coords
 
 
 def clip_action(action):
-    return np.clip(action, -FLAGS.action_clipping, FLAGS.action_clipping)
-
-
-def eval_mppi(
-    env,
-    dynamics,
-    policy,
-    latent_action_space_size,
-    episode_horizon,
-    planning_horizon=1,
-    primitive_horizon=10,
-    num_candidate_sequences=50,
-    refine_steps=10,
-    mppi_gamma=10,
-    prior_type='normal',
-    smoothing_beta=0.9,
-    # no need to change generally
-    sparsify_rewards=False,
-    # only for uniform prior mode
-    top_primitives=5):
-  """env: tf-agents environment without the skill wrapper.
-
-     dynamics: skill-dynamics model learnt by DADS.
-     policy: skill-conditioned policy learnt by DADS.
-     planning_horizon: number of latent skills to plan in the future.
-     primitive_horizon: number of steps each skill is executed for.
-     num_candidate_sequences: number of samples executed from the prior per
-     refining step of planning.
-     refine_steps: number of steps for which the plan is iterated upon before
-     execution (number of optimization steps).
-     mppi_gamma: MPPI parameter for reweighing rewards.
-     prior_type: 'normal' implies MPPI, 'uniform' implies a CEM like algorithm
-     (not tested).
-     smoothing_beta: for planning_horizon > 1, the every sampled plan is
-     smoothed using EMA. (0-> no smoothing, 1-> perfectly smoothed)
-     sparsify_rewards: converts a dense reward problem into a sparse reward
-     (avoid using).
-     top_primitives: number of elites to choose, if using CEM (not tested).
-  """
-
-  def _smooth_primitive_sequences(primitive_sequences):
-    for planning_idx in range(1, primitive_sequences.shape[1]):
-      primitive_sequences[:,
-                          planning_idx, :] = smoothing_beta * primitive_sequences[:, planning_idx - 1, :] + (
-                              1. - smoothing_beta
-                          ) * primitive_sequences[:, planning_idx, :]
-
-    return primitive_sequences
-
-  def _get_init_primitive_parameters():
-    if prior_type == 'normal':
-      prior_mean = functools.partial(
-          np.random.multivariate_normal,
-          mean=np.zeros(latent_action_space_size),
-          cov=np.diag(np.ones(latent_action_space_size)))
-      prior_cov = lambda: 1.5 * np.diag(np.ones(latent_action_space_size))
-      return [prior_mean(), prior_cov()]
-
-    elif prior_type == 'uniform':
-      prior_low = lambda: np.array([-1.] * latent_action_space_size)
-      prior_high = lambda: np.array([1.] * latent_action_space_size)
-      return [prior_low(), prior_high()]
-
-  def _sample_primitives(params):
-    if prior_type == 'normal':
-      sample = np.random.multivariate_normal(*params)
-    elif prior_type == 'uniform':
-      sample = np.random.uniform(*params)
-    return np.clip(sample, -1., 1.)
-
-  # update new primitive means for horizon sequence
-  def _update_parameters(candidates, reward, primitive_parameters):
-    # a more regular mppi
-    if prior_type == 'normal':
-      reward = np.exp(mppi_gamma * (reward - np.max(reward)))
-      reward = reward / (reward.sum() + 1e-10)
-      new_means = (candidates.T * reward).T.sum(axis=0)
-
-      for planning_idx in range(candidates.shape[1]):
-        primitive_parameters[planning_idx][0] = new_means[planning_idx]
-
-    # TODO(architsh): closer to cross-entropy/shooting method, figure out a better update
-    elif prior_type == 'uniform':
-      chosen_candidates = candidates[np.argsort(reward)[-top_primitives:]]
-      candidates_min = np.min(chosen_candidates, axis=0)
-      candidates_max = np.max(chosen_candidates, axis=0)
-
-      for planning_idx in range(candidates.shape[1]):
-        primitive_parameters[planning_idx][0] = candidates_min[planning_idx]
-        primitive_parameters[planning_idx][1] = candidates_max[planning_idx]
-
-  def _get_expected_primitive(params):
-    if prior_type == 'normal':
-      return params[0]
-    elif prior_type == 'uniform':
-      return (params[0] + params[1]) / 2
-
-  time_step = env.reset()
-  actual_coords = [np.expand_dims(time_step.observation[:2], 0)]
-  actual_reward = 0.
-  distance_to_goal_array = []
-
-  primitive_parameters = []
-  chosen_primitives = []
-  for _ in range(planning_horizon):
-    primitive_parameters.append(_get_init_primitive_parameters())
-
-  for _ in range(episode_horizon // primitive_horizon):
-    for _ in range(refine_steps):
-      # generate candidates sequences for primitives
-      candidate_primitive_sequences = []
-      for _ in range(num_candidate_sequences):
-        candidate_primitive_sequences.append([
-            _sample_primitives(primitive_parameters[planning_idx])
-            for planning_idx in range(planning_horizon)
-        ])
-
-      candidate_primitive_sequences = np.array(candidate_primitive_sequences)
-      candidate_primitive_sequences = _smooth_primitive_sequences(
-          candidate_primitive_sequences)
-
-      running_cur_state = np.array(
-          [process_observation(time_step.observation)] *
-          num_candidate_sequences)
-      running_reward = np.zeros(num_candidate_sequences)
-      for planning_idx in range(planning_horizon):
-        cur_primitives = candidate_primitive_sequences[:, planning_idx, :]
-        for _ in range(primitive_horizon):
-          predicted_next_state = dynamics.predict_state(running_cur_state,
-                                                        cur_primitives)
-
-          # update running stuff
-          kwargs = dict()
-          if "info" in inspect.signature(env.compute_reward).parameters:
-              kwargs["info"] = None
-          dense_reward = env.compute_reward(running_cur_state, predicted_next_state, **kwargs)
-          # modification for sparse_reward
-          if sparsify_rewards:
-            sparse_reward = 5.0 * (dense_reward > -2) + 0.0 * (
-                dense_reward <= -2)
-            running_reward += sparse_reward
-          else:
-            running_reward += dense_reward
-
-          running_cur_state = predicted_next_state
-
-      _update_parameters(candidate_primitive_sequences, running_reward,
-                         primitive_parameters)
-
-    chosen_primitive = _get_expected_primitive(primitive_parameters[0])
-    chosen_primitives.append(chosen_primitive)
-
-    # a loop just to check what the chosen primitive is expected to do
-    # running_cur_state = np.array([process_observation(time_step.observation)])
-    # for _ in range(primitive_horizon):
-    #   predicted_next_state = dynamics.predict_state(
-    #       running_cur_state, np.expand_dims(chosen_primitive, 0))
-    #   running_cur_state = predicted_next_state
-    # print('Predicted next co-ordinates:', running_cur_state[0, :2])
-
-
-
-    for _ in range(primitive_horizon):
-      # concatenated observation
-      obs_plus_skill = np.concatenate([time_step.observation, chosen_primitive], axis=0)
-      action = policy.action(hide_coords(time_step._replace(observation=obs_plus_skill))).action
-      next_time_step = env.step(clip_action(action))
-      actual_reward += next_time_step.reward
-      distance_to_goal_array.append(next_time_step.reward)
-      # prepare for next iteration
-      time_step = next_time_step
-      actual_coords.append(np.expand_dims(time_step.observation[:2], 0))
-      # print(step_idx)
-    # print('Actual next co-ordinates:', actual_coords[-1])
-
-    primitive_parameters.pop(0)
-    primitive_parameters.append(_get_init_primitive_parameters())
-
-  actual_coords = np.concatenate(actual_coords)
-  return actual_reward, actual_coords, np.array(
-      chosen_primitives), distance_to_goal_array
+    return clip(action, -FLAGS.action_clipping, FLAGS.action_clipping)
 
 
 class UniformResampler:
@@ -1107,6 +810,19 @@ def enter_manual_control_mode(eval_policy: py_tf_policy.PyTFPolicy):
             action = clip_action(eval_policy.action_mean(hide_coords(timestep)))
             timestep = env.step(action)
             env.render("human")
+
+
+def enter_mppi_control_mode(tf_agents_env, skill_dynamics, eval_policy):
+    latent_action_space_size = FLAGS.num_skills
+    episode_horizon = FLAGS.max_env_steps
+    planning_horizon = FLAGS.planning_horizon
+    primitive_horizon = FLAGS.primitive_horizon
+    num_candidate_sequences = FLAGS.num_candidate_sequences
+    refine_steps = FLAGS.refine_steps
+    mppi_gamma = FLAGS.mppi_gamma
+    prior_type = FLAGS.prior_type
+    smoothing_beta = FLAGS.smoothing_beta
+    top_primitives = FLAGS.top_primitives
 
 
 def main(_):
@@ -1613,13 +1329,17 @@ def main(_):
         if 'discrete' in FLAGS.skill_type:
           planning_fn = eval_planning
         else:
-          planning_fn = eval_mppi
+          kwargs = dict(env_name=FLAGS.environment + "_goal",
+                        reduced_observation=FLAGS.reduced_observation,
+                        action_limit=FLAGS.action_clipping,
+                        observation_omit_size=observation_omit_size)
+          planning_fn = partial(eval_mppi, **kwargs)
 
         eval_plan_env = get_environment(env_name=FLAGS.environment + '_goal')
         video_env = video_wrapper.VideoWrapper(env=eval_plan_env,
                                                base_path=os.path.join(log_dir, "videos", "final_eval"),
                                                base_name="final-mpc")
-        reward, actual_coords, primitives, distance_to_goal_array = planning_fn(
+        reward, primitives = planning_fn(
           video_env, agent.skill_dynamics, eval_policy,
           latent_action_space_size=FLAGS.num_skills,
           episode_horizon=FLAGS.max_env_steps,
