@@ -15,7 +15,7 @@ class SlidersInputFrame(wx.Frame):
         panel.SetSizer(sizer)
         self.Show()
 
-    def slider_values(self):
+    def get_slider_values(self):
         return [s.GetValue() for s in self._sliders]
 
 
@@ -36,5 +36,5 @@ def create_sliders_widget(dim=5) -> SlidersInputFrame:
 if __name__ == '__main__':
     widget = create_sliders_widget()
     while True:
-        print(widget.slider_values(), flush=True)
+        print(widget.get_slider_values(), flush=True)
         time.sleep(0.05)
