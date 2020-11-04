@@ -96,6 +96,7 @@ class PyTFPolicy(py_policy.Base, session_utils.SessionUser):
           self._tf_policy.action_spec, outer_dims=outer_dims)
       self._action_distribution = self._tf_policy.distribution(
           self._time_step, policy_state=self._policy_state).action
+      self._action_mean = self._action_distribution.mean()
       self._log_prob = common.log_probability(self._action_distribution,
                                               self._actions,
                                               self._tf_policy.action_spec)
@@ -184,6 +185,14 @@ class PyTFPolicy(py_policy.Base, session_utils.SessionUser):
           'previously. Expected {}, but saw {}.'.format(self._batch_size,
                                                         batch_size))
     return self.session.run(self._tf_initial_state)
+
+  def action_mean(self, time_step):
+      if not self._built:
+          self._build_from_time_step(time_step)
+
+      reshape = nest_utils.batch_nested_array
+      feed_dict = {self._time_step: reshape(time_step)}
+      return self.session.run(self._action_mean, feed_dict)[0]
 
   def _action(self, time_step, policy_state):
     if not self._built:
