@@ -4,54 +4,27 @@ from typing import Callable
 import numpy as np
 
 from lib import py_tf_policy
-from unsupervised_skill_learning.common_funcs import process_observation_given, \
-    hide_coordinates, clip
+from unsupervised_skill_learning.common_funcs import process_observation_given
 
 
-def eval_mppi(
-    env,
-    policy: py_tf_policy.PyTFPolicy,
-    episode_horizon,
-    next_skill_generator,
-    action_limit=1,
-    observation_omit_size=0
-):
-    """env: tf-agents environment without the skill wrapper.
-     dynamics: skill-dynamics model learnt by DADS.
-     policy: skill-conditioned policy learnt by DADS.
-     planning_horizon: number of latent skills to plan in the future.
-     primitive_horizon: number of steps each skill is executed for.
-     num_candidate_sequences: number of samples executed from the prior per
-     refining step of planning.
-     refine_steps: number of steps for which the plan is iterated upon before
-     execution (number of optimization steps).
-     mppi_gamma: MPPI parameter for reweighing rewards.
-     prior_type: 'normal' implies MPPI, 'uniform' implies a CEM like algorithm
-     (not tested).
-     smoothing_beta: for planning_horizon > 1, the every sampled plan is
-     smoothed using EMA. (0-> no smoothing, 1-> perfectly smoothed)
-     sparsify_rewards: converts a dense reward problem into a sparse reward
-     (avoid using).
-     top_primitives: number of elites to choose, if using CEM (not tested).
-    """
+def evaluate_skill_provider(
+        env,
+        policy: py_tf_policy.PyTFPolicy,
+        episode_length: int,
+        hide_coords_fn: Callable,
+        clip_action_fn: Callable,
+        skill_provider):
     check_reward_fn(env)
 
-    def hide_coords(timestep):
-        return hide_coordinates(timestep, first_n=observation_omit_size)
-
-    def clip_action(action):
-        return clip(action, low=-action_limit, high=action_limit)
-
-    time_step = env.reset()
-    for step in range(episode_horizon):
-        next(next_skill_generator)
-        chosen_skill = next_skill_generator.send(time_step)
-        obs_plus_skill = np.concatenate([time_step.observation, chosen_skill], axis=0)
-        action = policy.action_mean(hide_coords(time_step._replace(observation=obs_plus_skill)))
-        next_time_step = env.step(clip_action(action))
-        time_step = next_time_step
-        if step % 5 == 0:
-            print(f"MPC step {step}")
+    while True:
+        timestep = env.reset()
+        skill_provider.start_episode()
+        for _ in range(episode_length):
+            skill = skill_provider.get_skill(timestep)
+            timestep = timestep._replace(observation=np.concatenate((timestep.observation, skill)))
+            action = clip_action_fn(policy.action_mean(hide_coords_fn(timestep)))
+            timestep = env.step(action)
+            env.render("human")
 
 
 def check_reward_fn(env):

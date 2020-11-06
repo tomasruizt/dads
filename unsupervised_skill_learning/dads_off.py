@@ -19,19 +19,21 @@ from __future__ import print_function
 import time
 import os
 import io
-from functools import partial
-from typing import List
+from abc import ABC
+from typing import List, Callable, Generator
 import gtimer as gt
 from absl import flags, logging
 
 import sys
+
+from tf_agents.trajectories.time_step import TimeStep
 
 from density_estimation import DensityEstimator
 from envs.fetch import make_fetch_pick_and_place_env, make_fetch_slide_env, make_point2d_dads_env
 from skill_slider import create_sliders_widget
 from unsupervised_skill_learning.common_funcs import process_observation_given, \
     hide_coordinates, clip
-from unsupervised_skill_learning.mppi import eval_mppi, choose_next_skill_loop_given
+from unsupervised_skill_learning.mppi import evaluate_skill_provider, choose_next_skill_loop_given
 
 sys.path.append(os.path.abspath('./'))
 
@@ -197,7 +199,7 @@ flags.DEFINE_integer('normalize_data', 1, 'Maintain running averages')
 
 # debug
 flags.DEFINE_integer('debug', 0, 'Creates extra summaries')
-flags.DEFINE_boolean('manual_control', False, 'Pop a slider to control the skills manually.')
+flags.DEFINE_boolean('manual_control_mode', False, 'Pop a slider to control the skills manually.')
 
 # DKitty
 flags.DEFINE_integer('expose_last_action', 1, 'Add the last action to the observation')
@@ -800,30 +802,51 @@ class UniformResampler:
         return tf.nest.map_structure(lambda trj: trj[indices], trajectory)
 
 
+class SkillProvider(ABC):
+    def start_episode(self):
+        return NotImplementedError
+
+    def get_skill(self, ts: TimeStep):
+        return NotImplementedError
+
+
+class SliderSkillProvider(SkillProvider):
+    def __init__(self):
+        self._slider = create_sliders_widget(dim=FLAGS.num_skills)
+
+    def start_episode(self):
+        pass
+
+    def get_skill(self, ts: TimeStep):
+        return self._slider.get_slider_values()
+
+
+class MPCSkillProvider(SkillProvider):
+    def __init__(self, dynamics, env_compute_reward_fn: Callable):
+        self._env_compute_reward_fn = env_compute_reward_fn
+        self._dynamics = dynamics
+        self._loop: Generator = None
+
+    def start_episode(self):
+        self._loop = choose_next_skill_loop(
+            dynamics=self._dynamics,
+            env_compute_reward_fn=self._env_compute_reward_fn
+        )
+
+    def get_skill(self, ts: TimeStep):
+        next(self._loop)
+        return self._loop.send(ts)
+
+
 def enter_manual_control_mode(eval_policy: py_tf_policy.PyTFPolicy):
-    widget = create_sliders_widget(dim=FLAGS.num_skills)
-    env = wrap_env(get_environment(env_name=FLAGS.environment))
-    while True:
-        timestep = env.reset()
-        for _ in range(200):
-            skill = widget.get_slider_values()
-            timestep = timestep._replace(observation=np.concatenate((timestep.observation, skill)))
-            action = clip_action(eval_policy.action_mean(hide_coords(timestep)))
-            timestep = env.step(action)
-            env.render("human")
-
-
-def enter_mppi_control_mode(tf_agents_env, skill_dynamics, eval_policy):
-    latent_action_space_size = FLAGS.num_skills
-    episode_horizon = FLAGS.max_env_steps
-    planning_horizon = FLAGS.planning_horizon
-    primitive_horizon = FLAGS.primitive_horizon
-    num_candidate_sequences = FLAGS.num_candidate_sequences
-    refine_steps = FLAGS.refine_steps
-    mppi_gamma = FLAGS.mppi_gamma
-    prior_type = FLAGS.prior_type
-    smoothing_beta = FLAGS.smoothing_beta
-    top_primitives = FLAGS.top_primitives
+    return evaluate_skill_provider(
+        env=get_environment(env_name=FLAGS.environment + "_goal"),
+        policy=eval_policy,
+        episode_length=100,
+        hide_coords_fn=hide_coords,
+        clip_action_fn=clip_action,
+        skill_provider=SliderSkillProvider()
+    )
 
 
 def main(_):
@@ -1055,7 +1078,7 @@ def main(_):
 
           return nest.map_structure(lambda x: x[valid_indices], trajectory)
 
-        if FLAGS.manual_control:
+        if FLAGS.manual_control_mode:
             return enter_manual_control_mode(eval_policy)
 
         if iter_count == 0:
@@ -1346,15 +1369,14 @@ def main(_):
                 primitive_horizon=FLAGS.primitive_horizon
             )
         else:
-            next_skill_generator = choose_next_skill_loop(
-                dynamics=agent.skill_dynamics,
-                env_compute_reward_fn=video_env.compute_reward)
-            eval_mppi(env=video_env,
-                      policy=eval_policy,
-                      episode_horizon=FLAGS.max_env_steps,
-                      next_skill_generator=next_skill_generator,
-                      action_limit=FLAGS.action_clipping,
-                      observation_omit_size=observation_omit_size)
+            skill_provider = MPCSkillProvider(dynamics=agent.skill_dynamics,
+                                              env_compute_reward_fn=video_env.compute_reward)
+            evaluate_skill_provider(env=eval_plan_env,
+                                    policy=eval_policy,
+                                    episode_length=FLAGS.max_env_steps,
+                                    hide_coords_fn=hide_coords,
+                                    clip_action_fn=clip_action,
+                                    skill_provider=skill_provider)
         video_env.close()
 
 
