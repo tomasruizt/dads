@@ -3,38 +3,7 @@ from typing import Callable
 
 import numpy as np
 
-from lib import py_tf_policy
 from unsupervised_skill_learning.common_funcs import process_observation_given
-
-
-def evaluate_skill_provider(
-        env,
-        policy: py_tf_policy.PyTFPolicy,
-        episode_length: int,
-        hide_coords_fn: Callable,
-        clip_action_fn: Callable,
-        skill_provider):
-    check_reward_fn(env)
-
-    while True:
-        timestep = env.reset()
-        skill_provider.start_episode()
-        for _ in range(episode_length):
-            skill = skill_provider.get_skill(timestep)
-            timestep = timestep._replace(observation=np.concatenate((timestep.observation, skill)))
-            action = clip_action_fn(policy.action_mean(hide_coords_fn(timestep)))
-            timestep = env.step(action)
-            env.render("human")
-
-
-def check_reward_fn(env):
-    obs1 = env.observation_space.sample()
-    obs2 = env.observation_space.sample()
-    reward_dads = env.compute_reward(obs1, obs2, info="dads")
-
-    to_goal = env.achieved_goal_from_state
-    reward_classic = env.compute_reward(to_goal(obs1), to_goal(obs2), info=None)
-    assert not np.isclose(reward_dads, reward_classic), f"Both rewards are equal to: {reward_dads}"
 
 
 def choose_next_skill_loop_given(dynamics,

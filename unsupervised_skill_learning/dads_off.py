@@ -19,7 +19,6 @@ from __future__ import print_function
 import time
 import os
 import io
-from abc import ABC
 from typing import List, Callable, Generator
 import gtimer as gt
 from absl import flags, logging
@@ -30,10 +29,10 @@ from tf_agents.trajectories.time_step import TimeStep
 
 from density_estimation import DensityEstimator
 from envs.fetch import make_fetch_pick_and_place_env, make_fetch_slide_env, make_point2d_dads_env
-from skill_slider import create_sliders_widget
 from unsupervised_skill_learning.common_funcs import process_observation_given, \
-    hide_coordinates, clip
-from unsupervised_skill_learning.mppi import evaluate_skill_provider, choose_next_skill_loop_given
+    hide_coordinates, clip, SliderSkillProvider, evaluate_skill_provider, \
+    SkillProvider
+from unsupervised_skill_learning.mppi import choose_next_skill_loop_given
 
 sys.path.append(os.path.abspath('./'))
 
@@ -802,42 +801,6 @@ class UniformResampler:
         return tf.nest.map_structure(lambda trj: trj[indices], trajectory)
 
 
-class SkillProvider(ABC):
-    def start_episode(self):
-        return NotImplementedError
-
-    def get_skill(self, ts: TimeStep):
-        return NotImplementedError
-
-
-class SliderSkillProvider(SkillProvider):
-    def __init__(self):
-        self._slider = create_sliders_widget(dim=FLAGS.num_skills)
-
-    def start_episode(self):
-        pass
-
-    def get_skill(self, ts: TimeStep):
-        return self._slider.get_slider_values()
-
-
-class MPCSkillProvider(SkillProvider):
-    def __init__(self, dynamics, env_compute_reward_fn: Callable):
-        self._env_compute_reward_fn = env_compute_reward_fn
-        self._dynamics = dynamics
-        self._loop: Generator = None
-
-    def start_episode(self):
-        self._loop = choose_next_skill_loop(
-            dynamics=self._dynamics,
-            env_compute_reward_fn=self._env_compute_reward_fn
-        )
-
-    def get_skill(self, ts: TimeStep):
-        next(self._loop)
-        return self._loop.send(ts)
-
-
 def enter_manual_control_mode(eval_policy: py_tf_policy.PyTFPolicy):
     return evaluate_skill_provider(
         env=get_environment(env_name=FLAGS.environment + "_goal"),
@@ -1352,15 +1315,17 @@ def main(_):
           tf.io.gfile.makedirs(eval_dir)
 
         eval_plan_env = get_environment(env_name=FLAGS.environment + '_goal')
-        video_env = video_wrapper.VideoWrapper(
-            env=eval_plan_env,
-            base_path=os.path.join(log_dir, "videos", "final_eval"),
-            base_name="final-mpc"
-        )
+        record_mpc_performance = False
+        if record_mpc_performance:
+            eval_plan_env = video_wrapper.VideoWrapper(
+                env=eval_plan_env,
+                base_path=os.path.join(log_dir, "videos", "final_eval"),
+                base_name="final-mpc"
+            )
 
         if 'discrete' in FLAGS.skill_type:
             eval_planning(
-                env=video_env,
+                env=eval_plan_env,
                 dynamics=agent.skill_dynamics,
                 policy=eval_policy,
                 latent_action_space_size=FLAGS.num_skills,
@@ -1370,14 +1335,32 @@ def main(_):
             )
         else:
             skill_provider = MPCSkillProvider(dynamics=agent.skill_dynamics,
-                                              env_compute_reward_fn=video_env.compute_reward)
+                                              env_compute_reward_fn=eval_plan_env.compute_reward)
             evaluate_skill_provider(env=eval_plan_env,
                                     policy=eval_policy,
                                     episode_length=FLAGS.max_env_steps,
                                     hide_coords_fn=hide_coords,
                                     clip_action_fn=clip_action,
                                     skill_provider=skill_provider)
-        video_env.close()
+        if record_mpc_performance:
+            eval_plan_env.close()
+
+
+class MPCSkillProvider(SkillProvider):
+    def __init__(self, dynamics, env_compute_reward_fn: Callable):
+        self._env_compute_reward_fn = env_compute_reward_fn
+        self._dynamics = dynamics
+        self._loop: Generator = None
+
+    def start_episode(self):
+        self._loop = choose_next_skill_loop(
+            dynamics=self._dynamics,
+            env_compute_reward_fn=self._env_compute_reward_fn
+        )
+
+    def get_skill(self, ts: TimeStep):
+        next(self._loop)
+        return self._loop.send(ts)
 
 
 def choose_next_skill_loop(dynamics, env_compute_reward_fn):

@@ -1,5 +1,12 @@
+from abc import ABC
+from typing import Callable
+
 import numpy as np
 import tensorflow as tf
+from tf_agents.trajectories.time_step import TimeStep
+
+from lib import py_tf_policy
+from skill_slider import create_sliders_widget
 
 
 def process_observation_given(obs, env_name: str, reduced_observation: int):
@@ -121,3 +128,52 @@ def hide_coordinates(time_step, first_n: int):
 
 def clip(x, low: float, high: float):
     return np.clip(x, a_min=low, a_max=high)
+
+
+class SkillProvider(ABC):
+    def start_episode(self):
+        return NotImplementedError
+
+    def get_skill(self, ts: TimeStep):
+        return NotImplementedError
+
+
+class SliderSkillProvider(SkillProvider):
+    def __init__(self, num_sliders: int):
+        self._slider = create_sliders_widget(dim=num_sliders)
+
+    def start_episode(self):
+        pass
+
+    def get_skill(self, ts: TimeStep):
+        return self._slider.get_slider_values()
+
+
+def evaluate_skill_provider(
+        env,
+        policy: py_tf_policy.PyTFPolicy,
+        episode_length: int,
+        hide_coords_fn: Callable,
+        clip_action_fn: Callable,
+        skill_provider):
+    check_reward_fn(env)
+
+    while True:
+        timestep = env.reset()
+        skill_provider.start_episode()
+        for _ in range(episode_length):
+            skill = skill_provider.get_skill(timestep)
+            timestep = timestep._replace(observation=np.concatenate((timestep.observation, skill)))
+            action = clip_action_fn(policy.action_mean(hide_coords_fn(timestep)))
+            timestep = env.step(action)
+            env.render("human")
+
+
+def check_reward_fn(env):
+    obs1 = env.observation_space.sample()
+    obs2 = env.observation_space.sample()
+    reward_dads = env.compute_reward(obs1, obs2, info="dads")
+
+    to_goal = env.achieved_goal_from_state
+    reward_classic = env.compute_reward(to_goal(obs1), to_goal(obs2), info=None)
+    assert not np.isclose(reward_dads, reward_classic), f"Both rewards are equal to: {reward_dads}"
