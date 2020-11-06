@@ -27,8 +27,7 @@ from absl import flags, logging
 import sys
 
 from density_estimation import DensityEstimator
-from envs.fetch import make_fetch_pick_and_place_env, make_fetch_slide_env
-from envs.point2d_env import make_point2d_env
+from envs.fetch import make_fetch_pick_and_place_env, make_fetch_slide_env, make_point2d_dads_env
 from skill_slider import create_sliders_widget
 from unsupervised_skill_learning.common_funcs import process_observation_given, \
     hide_coordinates, clip
@@ -247,15 +246,17 @@ def _normal_projection_net(action_spec, init_means_output_factor=0.1):
 def get_environment(env_name='point_mass'):
   global observation_omit_size
   if env_name == 'point2d':
-    env = make_point2d_env()
+    env = make_point2d_dads_env()
+  elif env_name == "point2d_goal":
+      return wrap_env(make_point2d_dads_env(), max_episode_steps=FLAGS.max_env_steps)
   elif env_name == "pickandplace":
     env = make_fetch_pick_and_place_env()
   elif env_name == "pickandplace_goal":
-    return wrap_env(make_fetch_pick_and_place_env(), max_episode_steps=50)
+    return wrap_env(make_fetch_pick_and_place_env(), max_episode_steps=FLAGS.max_env_steps)
   elif env_name == "slide":
     env = make_fetch_slide_env()
   elif env_name == "slide_goal":
-    return wrap_env(make_fetch_slide_env(), max_episode_steps=50)
+    return wrap_env(make_fetch_slide_env(), max_episode_steps=FLAGS.max_env_steps)
   elif env_name == 'Ant-v1':
     env = ant.AntEnv(
         expose_all_qpos=True,
@@ -647,7 +648,7 @@ def eval_loop(eval_dir,
     for eval_idx in range(per_skill_evaluations):
 
       # record videos for sampled trajectories
-      do_record_video = vid_name is not None and eval_idx == 0
+      do_record_video = False and vid_name is not None and eval_idx == 0
       if do_record_video:
         full_vid_name = vid_name + '_' + str(skill_idx)
         traj_env = video_wrapper.VideoWrapper(eval_env, base_path=eval_dir, base_name=full_vid_name)
