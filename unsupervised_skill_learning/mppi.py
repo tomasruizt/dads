@@ -10,24 +10,10 @@ from unsupervised_skill_learning.common_funcs import process_observation_given, 
 
 def eval_mppi(
     env,
-    dynamics,
     policy: py_tf_policy.PyTFPolicy,
-    latent_action_space_size,
     episode_horizon,
-    env_name,
-    planning_horizon=1,
-    primitive_horizon=10,
-    num_candidate_sequences=50,
-    refine_steps=10,
-    mppi_gamma=10,
-    prior_type='normal',
-    smoothing_beta=0.9,
-    # no need to change generally
-    sparsify_rewards=False,
-    # only for uniform prior mode
-    top_primitives=5,
+    next_skill_generator,
     action_limit=1,
-    reduced_observation=0,
     observation_omit_size=0
 ):
     """env: tf-agents environment without the skill wrapper.
@@ -49,24 +35,6 @@ def eval_mppi(
      top_primitives: number of elites to choose, if using CEM (not tested).
     """
     check_reward_fn(env)
-    steps_per_skill = primitive_horizon
-    num_skills_to_plan = planning_horizon
-
-    next_skill_generator = choose_next_skill_loop(
-            dynamics=dynamics,
-            prior_type=prior_type,
-            skill_dim=latent_action_space_size,
-            num_skills_to_plan=num_skills_to_plan,
-            steps_per_skill=steps_per_skill,
-            refine_steps=refine_steps,
-            num_candidate_sequences=num_candidate_sequences,
-            smoothing_beta=smoothing_beta,
-            env_name=env_name,
-            reduced_observation=reduced_observation,
-            sparsify_rewards=sparsify_rewards,
-            env_compute_reward_fn=env.compute_reward,
-            mppi_gamma=mppi_gamma,
-            top_primitives=top_primitives)
 
     def hide_coords(timestep):
         return hide_coordinates(timestep, first_n=observation_omit_size)
@@ -91,25 +59,25 @@ def check_reward_fn(env):
     obs2 = env.observation_space.sample()
     reward_dads = env.compute_reward(obs1, obs2, info="dads")
 
-    to_goal = env.unwrapped.achieved_goal_from_state
+    to_goal = env.achieved_goal_from_state
     reward_classic = env.compute_reward(to_goal(obs1), to_goal(obs2), info=None)
     assert not np.isclose(reward_dads, reward_classic), f"Both rewards are equal to: {reward_dads}"
 
 
-def choose_next_skill_loop(dynamics,
-                           num_skills_to_plan: int,
-                           prior_type: str,
-                           skill_dim: int,
-                           steps_per_skill: int,
-                           refine_steps: int,
-                           num_candidate_sequences,
-                           smoothing_beta: float,
-                           env_name: str,
-                           reduced_observation: int,
-                           sparsify_rewards: bool,
-                           env_compute_reward_fn: Callable,
-                           mppi_gamma: float,
-                           top_primitives: int):
+def choose_next_skill_loop_given(dynamics,
+                                 num_skills_to_plan: int,
+                                 prior_type: str,
+                                 skill_dim: int,
+                                 steps_per_skill: int,
+                                 refine_steps: int,
+                                 num_candidate_sequences,
+                                 smoothing_beta: float,
+                                 env_name: str,
+                                 reduced_observation: int,
+                                 env_compute_reward_fn: Callable,
+                                 mppi_gamma: float,
+                                 top_primitives: int,
+                                 sparsify_rewards=False):
     skills_distr_params = []
     for _ in range(num_skills_to_plan):
         skills_distr_params.append(get_initial_skill_params(prior_type=prior_type, dim=skill_dim))
@@ -137,8 +105,7 @@ def choose_next_skill_loop(dynamics,
                     dense_reward = env_compute_reward_fn(running_cur_state, predicted_next_state, info="dads")
                     # modification for sparse_reward
                     if sparsify_rewards:
-                        sparse_reward = 5.0 * (dense_reward > -2) + 0.0 * (
-                                dense_reward <= -2)
+                        sparse_reward = 5.0 * (dense_reward > -2) + 0.0 * (dense_reward <= -2)
                         running_reward += sparse_reward
                     else:
                         running_reward += dense_reward

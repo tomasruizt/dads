@@ -31,7 +31,7 @@ from envs.fetch import make_fetch_pick_and_place_env, make_fetch_slide_env, make
 from skill_slider import create_sliders_widget
 from unsupervised_skill_learning.common_funcs import process_observation_given, \
     hide_coordinates, clip
-from unsupervised_skill_learning.mppi import eval_mppi
+from unsupervised_skill_learning.mppi import eval_mppi, choose_next_skill_loop_given
 
 sys.path.append(os.path.abspath('./'))
 
@@ -1327,33 +1327,53 @@ def main(_):
         eval_dir = os.path.join(eval_dir, 'mpc_eval')
         if not tf.io.gfile.exists(eval_dir):
           tf.io.gfile.makedirs(eval_dir)
-        if 'discrete' in FLAGS.skill_type:
-          planning_fn = eval_planning
-        else:
-          kwargs = dict(env_name=FLAGS.environment + "_goal",
-                        reduced_observation=FLAGS.reduced_observation,
-                        action_limit=FLAGS.action_clipping,
-                        observation_omit_size=observation_omit_size)
-          planning_fn = partial(eval_mppi, **kwargs)
 
         eval_plan_env = get_environment(env_name=FLAGS.environment + '_goal')
-        video_env = video_wrapper.VideoWrapper(env=eval_plan_env,
-                                               base_path=os.path.join(log_dir, "videos", "final_eval"),
-                                               base_name="final-mpc")
-        planning_fn(
-          video_env, agent.skill_dynamics, eval_policy,
-          latent_action_space_size=FLAGS.num_skills,
-          episode_horizon=FLAGS.max_env_steps,
-          planning_horizon=FLAGS.planning_horizon,
-          primitive_horizon=FLAGS.primitive_horizon,
-          num_candidate_sequences=FLAGS.num_candidate_sequences,
-          refine_steps=FLAGS.refine_steps,
-          mppi_gamma=FLAGS.mppi_gamma,
-          prior_type=FLAGS.prior_type,
-          smoothing_beta=FLAGS.smoothing_beta,
-          top_primitives=FLAGS.top_primitives
+        video_env = video_wrapper.VideoWrapper(
+            env=eval_plan_env,
+            base_path=os.path.join(log_dir, "videos", "final_eval"),
+            base_name="final-mpc"
         )
+
+        if 'discrete' in FLAGS.skill_type:
+            eval_planning(
+                env=video_env,
+                dynamics=agent.skill_dynamics,
+                policy=eval_policy,
+                latent_action_space_size=FLAGS.num_skills,
+                episode_horizon=FLAGS.max_env_steps,
+                planning_horizon=FLAGS.planning_horizon,
+                primitive_horizon=FLAGS.primitive_horizon
+            )
+        else:
+            next_skill_generator = choose_next_skill_loop(
+                dynamics=agent.skill_dynamics,
+                env_compute_reward_fn=video_env.compute_reward)
+            eval_mppi(env=video_env,
+                      policy=eval_policy,
+                      episode_horizon=FLAGS.max_env_steps,
+                      next_skill_generator=next_skill_generator,
+                      action_limit=FLAGS.action_clipping,
+                      observation_omit_size=observation_omit_size)
         video_env.close()
+
+
+def choose_next_skill_loop(dynamics, env_compute_reward_fn):
+    return choose_next_skill_loop_given(
+        dynamics=dynamics,
+        env_compute_reward_fn=env_compute_reward_fn,
+        prior_type=FLAGS.prior_type,
+        skill_dim=FLAGS.num_skills,
+        num_skills_to_plan=FLAGS.planning_horizon,
+        steps_per_skill=FLAGS.primitive_horizon,
+        refine_steps=FLAGS.refine_steps,
+        num_candidate_sequences=FLAGS.num_candidate_sequences,
+        smoothing_beta=FLAGS.smoothing_beta,
+        env_name=FLAGS.environment + "_goal",
+        reduced_observation=FLAGS.reduced_observation,
+        mppi_gamma=FLAGS.mppi_gamma,
+        top_primitives=FLAGS.top_primitives
+    )
 
 
 def gtstamp(name: str):
