@@ -28,7 +28,8 @@ import sys
 from tf_agents.trajectories.time_step import TimeStep
 
 from density_estimation import DensityEstimator
-from envs.fetch import make_fetch_pick_and_place_env, make_fetch_slide_env, make_point2d_dads_env
+from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
+    make_point2d_dads_env, make_fetch_reach_env
 from unsupervised_skill_learning.common_funcs import process_observation_given, \
     hide_coordinates, clip, SliderSkillProvider, evaluate_skill_provider, \
     SkillProvider
@@ -233,6 +234,7 @@ iter_count = 0
 episode_size_buffer = []
 episode_return_buffer = []
 
+
 # add a flag for state dependent std
 def _normal_projection_net(action_spec, init_means_output_factor=0.1):
   return normal_projection_network.NormalProjectionNetwork(
@@ -244,20 +246,22 @@ def _normal_projection_net(action_spec, init_means_output_factor=0.1):
       scale_distribution=True)
 
 
+custom_envs_ctors = dict(
+    point2d=make_point2d_dads_env,
+    reach=make_fetch_reach_env,
+    pickandplace=make_fetch_pick_and_place_env,
+    slide=make_fetch_slide_env,
+)
+
+
 def get_environment(env_name='point_mass'):
   global observation_omit_size
-  if env_name == 'point2d':
-    env = make_point2d_dads_env()
-  elif env_name == "point2d_goal":
-      return wrap_env(make_point2d_dads_env(), max_episode_steps=FLAGS.max_env_steps)
-  elif env_name == "pickandplace":
-    env = make_fetch_pick_and_place_env()
-  elif env_name == "pickandplace_goal":
-    return wrap_env(make_fetch_pick_and_place_env(), max_episode_steps=FLAGS.max_env_steps)
-  elif env_name == "slide":
-    env = make_fetch_slide_env()
-  elif env_name == "slide_goal":
-    return wrap_env(make_fetch_slide_env(), max_episode_steps=FLAGS.max_env_steps)
+
+  simple_name = env_name.replace("_goal", "")
+  if simple_name in custom_envs_ctors:
+      env = custom_envs_ctors[simple_name]()
+      if env_name.endswith("_goal"):
+          return wrap_env(env, max_episode_steps=FLAGS.max_env_steps)
   elif env_name == 'Ant-v1':
     env = ant.AntEnv(
         expose_all_qpos=True,

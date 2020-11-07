@@ -4,7 +4,7 @@ import numpy as np
 
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
     FixedGoalFetchPickAndPlaceEnv, FixedGoalFetchSlideEnv, make_point2d_dads_env, \
-    FixedGoalFetchReach, make_fetch_reach_env, make_toylab_dads_env
+    DADSCustomFetchReachEnv, make_fetch_reach_env, make_toylab_dads_env
 
 envs_fns = [
     make_fetch_pick_and_place_env,
@@ -17,7 +17,7 @@ envs_fns = [
 fetch_env_ctors = [
     FixedGoalFetchPickAndPlaceEnv,
     FixedGoalFetchSlideEnv,
-    FixedGoalFetchReach
+    DADSCustomFetchReachEnv
 ]
 
 VECTORIZED_DIM = 50  # dim to test vectorized funcs
@@ -38,6 +38,7 @@ def test_env_trajectory(env_fn):
 
 def test_env_reward_fn(env_fn):
     env = env_fn()
+    env.seed(0)
     obs = env.reset()
     random_obs = env.observation_space.sample()
 

@@ -12,26 +12,26 @@ from envs.point2d_env import Point2DEnv
 
 
 def make_toylab_dads_env():
-    env = CustomToyLabEnv()
+    env = DADSCustomToyLabEnv()
     env = ObsAsOrderedDict(env)
     env = DadsRewardWrapper(env)
     env = FilterObservation(env, filter_keys=["achieved_goal", "observation"])
     return FlattenObservation(env)
 
 
-class CustomToyLabEnv(ToyLab):
+class DADSCustomToyLabEnv(ToyLab):
     def __init__(self):
         super().__init__(max_episode_len=sys.maxsize, use_random_starting_pos=True)
 
     @staticmethod
     def achieved_goal_from_state(obs: np.ndarray) -> np.ndarray:
-        return obs[..., :2] if is_batch(obs) else obs[:2]
+        return obs[..., :2] if _is_batch(obs) else obs[:2]
 
     def compute_reward(self, achieved_obs, desired_obs, info):
         achieved_goal = self.achieved_goal_from_state(achieved_obs)
         desired_goal = self.achieved_goal_from_state(desired_obs)
         r = partial(super().compute_reward, info=info)
-        if is_batch(achieved_obs):
+        if _is_batch(achieved_obs):
             return np.asarray([r(a, d) for a, d in zip(achieved_obs, desired_obs)])
         return r(achieved_goal=achieved_goal, desired_goal=desired_goal)
 
@@ -40,7 +40,7 @@ class CustomToyLabEnv(ToyLab):
         return self._goal_pos
 
 
-def is_batch(x: np.ndarray) -> bool:
+def _is_batch(x: np.ndarray) -> bool:
     return x.ndim == 2
 
 
@@ -62,7 +62,7 @@ def make_fetch_slide_env():
 
 
 def make_fetch_reach_env():
-    return _process_fetch_env(FixedGoalFetchReach(reward_type="dense"))
+    return _process_fetch_env(DADSCustomFetchReachEnv(reward_type="dense"))
 
 
 def _process_fetch_env(env: FetchEnv):
@@ -72,7 +72,7 @@ def _process_fetch_env(env: FetchEnv):
 
 
 def _get_goal_from_state_fetch(state: np.ndarray) -> np.ndarray:
-    return state[..., 3:6] if is_batch(state) else state[3:6]
+    return state[..., 3:6] if _is_batch(state) else state[3:6]
 
 
 class FixedGoalFetchPickAndPlaceEnv(FetchPickAndPlaceEnv):
@@ -93,15 +93,10 @@ class FixedGoalFetchSlideEnv(FetchSlideEnv):
         return self._fixed_goal.copy()
 
 
-class FixedGoalFetchReach(FetchReachEnv):
-    _fixed_goal = np.asarray([1.34803644, 0.71081931, 0.6831472])
-
+class DADSCustomFetchReachEnv(FetchReachEnv):
     @staticmethod
     def achieved_goal_from_state(obs: np.ndarray) -> np.ndarray:
-        return obs[..., :3] if is_batch(obs) else obs[:3]
-
-    def _sample_goal(self):
-        return self._fixed_goal.copy()
+        return obs[..., :3] if _is_batch(obs) else obs[:3]
 
 
 class DadsRewardWrapper(Wrapper):
