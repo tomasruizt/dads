@@ -1,7 +1,6 @@
-from functools import partial
 import numpy as np
 from gym import Wrapper
-from gym.envs.robotics import FetchPickAndPlaceEnv, FetchSlideEnv, FetchEnv
+from gym.envs.robotics import FetchPickAndPlaceEnv, FetchSlideEnv, FetchEnv, FetchReachEnv
 from gym.wrappers import FilterObservation, FlattenObservation
 
 from envs.point2d_env import Point2DEnv
@@ -17,6 +16,10 @@ def make_fetch_pick_and_place_env():
 
 def make_fetch_slide_env():
     return _process_fetch_env(FixedGoalFetchSlideEnv(reward_type="dense"))
+
+
+def make_fetch_reach_env():
+    return _process_fetch_env(FixedGoalFetchReach(reward_type="dense"))
 
 
 def _process_fetch_env(env: FetchEnv):
@@ -45,6 +48,20 @@ class FixedGoalFetchSlideEnv(FetchSlideEnv):
     _fixed_goal = np.asarray([1.7, 0.75, 0.41401894])
 
     achieved_goal_from_state = staticmethod(_get_goal_from_state_fetch)
+
+    def _sample_goal(self):
+        return self._fixed_goal.copy()
+
+
+class FixedGoalFetchReach(FetchReachEnv):
+    _fixed_goal = np.asarray([1.34803644, 0.71081931, 0.6831472])
+
+    @staticmethod
+    def achieved_goal_from_state(obs: np.ndarray) -> np.ndarray:
+        is_batch = obs.ndim is 2
+        if is_batch:
+            return obs[..., :3]
+        return obs[:3]
 
     def _sample_goal(self):
         return self._fixed_goal.copy()

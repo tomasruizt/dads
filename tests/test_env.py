@@ -1,15 +1,22 @@
 from functools import partial
-
 import pytest
 import numpy as np
 
-from envs.fetch import make_fetch_pick_and_place_env, make_fetch_slide_env, _get_goal_from_state_fetch, \
-    FixedGoalFetchPickAndPlaceEnv, FixedGoalFetchSlideEnv, make_point2d_dads_env
+from envs.fetch import make_fetch_pick_and_place_env, make_fetch_slide_env, \
+    FixedGoalFetchPickAndPlaceEnv, FixedGoalFetchSlideEnv, make_point2d_dads_env, \
+    FixedGoalFetchReach, make_fetch_reach_env
 
 envs_fns = [
     make_fetch_pick_and_place_env,
     make_fetch_slide_env,
+    make_fetch_reach_env,
     make_point2d_dads_env
+]
+
+fetch_env_ctors = [
+    FixedGoalFetchPickAndPlaceEnv,
+    FixedGoalFetchSlideEnv,
+    FixedGoalFetchReach
 ]
 
 
@@ -52,8 +59,15 @@ def test_env_reward_fn(env_fn):
     assert len(other_obs) == len(vec_potential)
 
 
-@pytest.mark.parametrize("env_ctor", [FixedGoalFetchPickAndPlaceEnv, FixedGoalFetchSlideEnv])
+@pytest.mark.parametrize("env_ctor", fetch_env_ctors)
 def test_block_pos(env_ctor):
     env = env_ctor()
     obs = env.reset()
-    assert np.allclose(obs["achieved_goal"], _get_goal_from_state_fetch(obs["observation"]))
+    assert np.allclose(obs["achieved_goal"], env.achieved_goal_from_state(obs["observation"]))
+
+    # Vectorized
+    dims = 7
+    many_obs = np.repeat(obs["observation"][None], dims, axis=0)
+    achieved_goals = np.repeat(obs["achieved_goal"][None], dims, axis=0)
+    assert np.allclose(achieved_goals, env.achieved_goal_from_state(many_obs))
+    assert len(env.achieved_goal_from_state(many_obs)) == dims
