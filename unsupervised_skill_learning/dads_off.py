@@ -769,11 +769,11 @@ def clip_action(action):
 
 
 class UniformResampler:
-    def __init__(self, buffer: SimpleBuffer, tf_graph: tf.Graph):
+    def __init__(self, state_dim: int, buffer: SimpleBuffer, tf_graph: tf.Graph):
         self._buffer = buffer
         with tf_graph.as_default():
             self._estimator = DensityEstimator(
-                input_dim=buffer.sample(1).observation.shape[-1] - FLAGS.num_skills,
+                input_dim=state_dim,
                 vae_training_batch_size=FLAGS.agent_batch_size,
                 samples_generator=lambda n: self._get_state_deltas(buffer.sample(n=n))
             )
@@ -979,7 +979,8 @@ def main(_):
     capacity = FLAGS.replay_buffer_capacity
     buffer = SimpleBuffer(capacity=capacity)
 
-    uniform_resampler = UniformResampler(buffer=buffer, tf_graph=agent._graph)
+    state_dim = trajectory_spec.observation.shape[0] - FLAGS.num_skills
+    uniform_resampler = UniformResampler(state_dim=state_dim, buffer=buffer, tf_graph=agent._graph)
 
     if FLAGS.train_skill_dynamics_on_policy:
       # for on-policy data (if something special is required)
