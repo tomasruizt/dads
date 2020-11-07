@@ -1,9 +1,52 @@
+import sys
+from collections import OrderedDict
+from functools import partial
+
 import numpy as np
-from gym import Wrapper
+from gym import Wrapper, ObservationWrapper
 from gym.envs.robotics import FetchPickAndPlaceEnv, FetchSlideEnv, FetchEnv, FetchReachEnv
 from gym.wrappers import FilterObservation, FlattenObservation
+from multi_goal.envs.toy_labyrinth_env import ToyLab
 
 from envs.point2d_env import Point2DEnv
+
+
+def make_toylab_dads_env():
+    env = CustomToyLabEnv()
+    env = ObsAsOrderedDict(env)
+    env = DadsRewardWrapper(env)
+    env = FilterObservation(env, filter_keys=["achieved_goal", "observation"])
+    return FlattenObservation(env)
+
+
+class CustomToyLabEnv(ToyLab):
+    def __init__(self):
+        super().__init__(max_episode_len=sys.maxsize, use_random_starting_pos=True)
+
+    @staticmethod
+    def achieved_goal_from_state(obs: np.ndarray) -> np.ndarray:
+        return obs[..., :2] if is_batch(obs) else obs[:2]
+
+    def compute_reward(self, achieved_obs, desired_obs, info):
+        achieved_goal = self.achieved_goal_from_state(achieved_obs)
+        desired_goal = self.achieved_goal_from_state(desired_obs)
+        r = partial(super().compute_reward, info=info)
+        if is_batch(achieved_obs):
+            return np.asarray([r(a, d) for a, d in zip(achieved_obs, desired_obs)])
+        return r(achieved_goal=achieved_goal, desired_goal=desired_goal)
+
+    @property
+    def goal(self):
+        return self._goal_pos
+
+
+def is_batch(x: np.ndarray) -> bool:
+    return x.ndim == 2
+
+
+class ObsAsOrderedDict(ObservationWrapper):
+    def observation(self, observation):
+        return OrderedDict(observation)
 
 
 def make_point2d_dads_env():
@@ -29,10 +72,7 @@ def _process_fetch_env(env: FetchEnv):
 
 
 def _get_goal_from_state_fetch(state: np.ndarray) -> np.ndarray:
-    is_batch = state.ndim == 2
-    if is_batch:
-        return state[..., 3:6]
-    return state[3:6]
+    return state[..., 3:6] if is_batch(state) else state[3:6]
 
 
 class FixedGoalFetchPickAndPlaceEnv(FetchPickAndPlaceEnv):
@@ -58,10 +98,7 @@ class FixedGoalFetchReach(FetchReachEnv):
 
     @staticmethod
     def achieved_goal_from_state(obs: np.ndarray) -> np.ndarray:
-        is_batch = obs.ndim is 2
-        if is_batch:
-            return obs[..., :3]
-        return obs[:3]
+        return obs[..., :3] if is_batch(obs) else obs[:3]
 
     def _sample_goal(self):
         return self._fixed_goal.copy()
@@ -79,5 +116,3 @@ class DadsRewardWrapper(Wrapper):
         goal = np.broadcast_to(self.goal, achieved_goal.shape)
         reward = lambda achieved: self.env.compute_reward(achieved, goal, info=None)
         return reward(next_achieved_goal) - reward(achieved_goal)
-
-
