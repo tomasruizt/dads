@@ -818,7 +818,6 @@ def enter_manual_control_mode(eval_policy: py_tf_policy.PyTFPolicy):
 
 def main(_):
   # setting up
-  start_time = time.time()
   tf.compat.v1.enable_resource_variables()
   tf.compat.v1.disable_eager_execution()
   logging.set_verbosity(logging.INFO)
@@ -1007,8 +1006,7 @@ def main(_):
         max_to_keep=1,
         replay_buffer=rbuffer)
 
-    setup_time = time.time() - start_time
-    print('Setup time:', setup_time)
+    gt.stamp('setup', quick_print=True)
 
     with tf.compat.v1.Session().as_default() as sess:
       train_checkpointer.initialize_or_restore(sess)
@@ -1017,7 +1015,6 @@ def main(_):
           initialize_or_restore_skill_dynamics=True, session=sess)
       uniform_resampler.tf_session = sess
 
-      meta_start_time = time.time()
       if FLAGS.run_train:
 
         train_writer = tf.compat.v1.summary.FileWriter(
@@ -1049,7 +1046,6 @@ def main(_):
             return enter_manual_control_mode(eval_policy)
 
         if iter_count == 0:
-          start_time = time.time()
           time_step, collect_info = collect_experience(
               py_env,
               time_step,
@@ -1062,11 +1058,9 @@ def main(_):
           _process_episodic_data(episode_return_buffer,
                                  collect_info['episode_return'])
           sample_count += FLAGS.initial_collect_steps
-          initial_collect_time = time.time() - start_time
-          print('Initial data collection time:', initial_collect_time)
+          gt.stamp('init-collect', quick_print=True)
 
-        while iter_count < FLAGS.num_epochs:
-          agent_end_train_time = time.time()
+        for iter_count in gt.timed_for(range(iter_count, FLAGS.num_epochs), name="main-loop"):
           print('iteration index:', iter_count)
 
           # model save
@@ -1081,9 +1075,8 @@ def main(_):
             np.save(os.path.join(log_dir, 'episode_size_buffer'), episode_size_buffer)
             np.save(os.path.join(log_dir, 'episode_return_buffer'), episode_return_buffer)
             np.save(os.path.join(log_dir, 'iter_count'), iter_count)
+            gt.stamp("save")
 
-          collect_start_time = time.time()
-          print('intermediate time:', collect_start_time - agent_end_train_time)
           time_step, collect_info = collect_experience(
               py_env,
               time_step,
@@ -1096,8 +1089,7 @@ def main(_):
                                  collect_info['episode_sizes'])
           _process_episodic_data(episode_return_buffer,
                                  collect_info['episode_return'])
-          collect_end_time = time.time()
-          print('Iter collection time:', collect_end_time - collect_start_time)
+          gt.stamp('collect-exp')
 
           # only for debugging skill relabelling
           if iter_count >= 1 and FLAGS.debug_skill_relabelling:
@@ -1120,12 +1112,10 @@ def main(_):
           if FLAGS.train_skill_dynamics_on_policy:
             skill_dynamics_buffer = on_buffer
 
-          gt.reset()
-
           # DENSITY TRAINING
           if FLAGS.use_dynamics_uniform_resampling:
               uniform_resampler.train_density()
-              gtstamp("density train time")
+              gt.stamp("density train time")
 
           def resample_trajs(num_batches: int, batch_size: int) -> List[Trajectory]:
               large_trajectory = skill_dynamics_buffer.get_next(
@@ -1145,12 +1135,12 @@ def main(_):
               trajectories_list = [_filter_trajectories(rbuffer.gather_all_transitions())]
           elif FLAGS.use_dynamics_uniform_resampling:
               trajectories_list = resample_trajs(num_batches=FLAGS.skill_dyn_train_steps, batch_size=FLAGS.skill_dyn_batch_size)
-              gtstamp("dynamics (re)sampling time")
+              gt.stamp("dynamics (re)sampling time")
           else:
               def get_batch():
                   return skill_dynamics_buffer.get_next(sample_batch_size=FLAGS.skill_dyn_batch_size, num_steps=2)
               trajectories_list = [get_batch() for _ in range(FLAGS.skill_dyn_train_steps)]
-              gtstamp("dynamics sampling time")
+              gt.stamp("[dyn]sample")
 
           # TODO(architsh): clear_buffer_every_iter needs to fix these as well
           for trajectory_sample in trajectories_list:
@@ -1185,7 +1175,7 @@ def main(_):
           if FLAGS.train_skill_dynamics_on_policy:
             on_buffer.clear()
 
-          gtstamp("skill_dynamics train time")
+          gt.stamp("[dyn]train")
 
           running_dads_reward, running_logp, running_logp_altz = [], [], []
 
@@ -1193,6 +1183,7 @@ def main(_):
           # agent train loop analysis
           for _ in range(FLAGS.agent_train_steps):
             trajectory_sample = rbuffer.get_next(sample_batch_size=FLAGS.agent_batch_size, num_steps=2)
+            gt.stamp("[agent]sample", unique=False)
             trajectory_sample = _filter_trajectories(trajectory_sample)
             trajectory_sample, _ = relabel_skill(
                 trajectory_sample,
@@ -1203,6 +1194,7 @@ def main(_):
             # need to match the assert structure
             if FLAGS.skill_dynamics_relabel_type is not None and 'importance_sampling' in FLAGS.skill_dynamics_relabel_type:
               trajectory_sample = trajectory_sample._replace(policy_info=())
+            gt.stamp("[agent]other", unique=False)
 
             if not FLAGS.clear_buffer_every_iter:
               dads_reward, info = agent.train_loop(
@@ -1216,13 +1208,12 @@ def main(_):
                   recompute_reward=True,  # turn False for normal SAC training
                   batch_size=FLAGS.agent_batch_size,
                   num_steps=FLAGS.agent_train_steps)
+            gt.stamp("[agent]train", unique=False)
 
             if dads_reward is not None:
               running_dads_reward.append(dads_reward)
               running_logp.append(info['logp'])
               running_logp_altz.append(info['logp_altz'])
-
-          gtstamp('agent train time:')
 
           if len(episode_size_buffer) > 1:
             train_writer.add_summary(
@@ -1288,13 +1279,8 @@ def main(_):
                 vid_name=FLAGS.vid_name,
                 plot_name='traj_plot')
 
-          iter_count += 1
-
         py_env.close()
-
-        print('Final statistics:')
-        print('\ttotal time for %d epochs: %f' %(FLAGS.num_epochs, time.time() - meta_start_time))
-        print('\tsteps collected during this time: %d' %(rbuffer.size))
+        print(gt.report(include_itrs=False, include_stats=False, format_options=dict(stamp_name_width=30)))
 
       # final evaluation, if any
       if FLAGS.run_eval:
@@ -1383,10 +1369,6 @@ def choose_next_skill_loop(dynamics, env_compute_reward_fn):
         mppi_gamma=FLAGS.mppi_gamma,
         top_primitives=FLAGS.top_primitives
     )
-
-
-def gtstamp(name: str):
-    gt.stamp(name, unique=False, quick_print=True)
 
 
 if __name__ == '__main__':
