@@ -13,13 +13,17 @@ class Transition(NamedTuple):
 
 class SimpleBuffer:
     def __init__(self, capacity: int):
-        self._store = CircularList(max_size=capacity)
+        self._capacity = capacity
+        self.clear()
 
     def add(self, transition: Transition):
         self._store.append(obj=transition)
 
     def sample(self, n: int):
         return self._store.sample(batch_size=n)
+
+    def clear(self):
+        self._store = CircularList(max_size=self._capacity)
 
 
 class CircularList:

@@ -73,7 +73,6 @@ from envs import dkitty_redesign
 from envs import hand_block
 
 from lib import py_tf_policy
-from lib import py_uniform_replay_buffer
 
 FLAGS = flags.FLAGS
 nest = tf.nest
@@ -982,12 +981,6 @@ def main(_):
     state_dim = trajectory_spec.observation.shape[0] - FLAGS.num_skills
     uniform_resampler = UniformResampler(state_dim=state_dim, buffer=buffer, tf_graph=agent._graph)
 
-    if FLAGS.train_skill_dynamics_on_policy:
-      # for on-policy data (if something special is required)
-      on_buffer = py_uniform_replay_buffer.PyUniformReplayBuffer(
-          capacity=FLAGS.initial_collect_steps + FLAGS.collect_steps + 10,
-          data_spec=trajectory_spec)
-
     # insert experience manually with relabelled rewards and skills
     agent.build_agent_graph()
     agent.build_skill_dynamics_graph()
@@ -1163,7 +1156,7 @@ def main(_):
                   num_steps=1)
 
           if FLAGS.train_skill_dynamics_on_policy:
-            on_buffer.clear()
+            buffer.clear()
 
           gt.stamp("[dyn]train")
 
