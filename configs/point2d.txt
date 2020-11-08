@@ -1,5 +1,6 @@
 --environment=point2d
---max_env_steps=30
+--max_env_steps=300
+--max_env_steps_eval=20
 
 --run_train=1
 --num_skills=2
@@ -8,29 +9,27 @@
 --save_model=dads
 --vid_name=skill
 
---save_freq=25
---record_freq=25
---num_evals=4
+--save_freq=100
+--record_freq=100
+--num_evals=5
 --per_skill_evals=10
---num_epochs=201
+--num_epochs=1001
 
 --replay_buffer_capacity=10000
---initial_collect_steps=100
---collect_steps=100
+--initial_collect_steps=300
+--collect_steps=300
 --resample_prob=1
---steps_before_resample=10
+--steps_before_resample=15
 
---skill_dyn_train_steps=30
+--skill_dyn_train_steps=64
 --skill_dyn_batch_size=256
---agent_train_steps=30
+--agent_train_steps=128
 --agent_batch_size=256
 --hidden_layer_size=128
 
-# Sparse-like environment
+# MPPI
 --run_eval=1
 --refine_steps=10
 --planning_horizon=1
---primitive_horizon=3
---num_candidate_sequences=50
-
---debug=1
+--primitive_horizon=2
+--num_candidate_sequences=100
