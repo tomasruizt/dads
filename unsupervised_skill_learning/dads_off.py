@@ -33,7 +33,7 @@ from lib.simple_buffer import SimpleBuffer, Transition
 from unsupervised_skill_learning.common_funcs import process_observation_given, \
     hide_coordinates, clip, SliderSkillProvider, evaluate_skill_provider, \
     SkillProvider
-from unsupervised_skill_learning.mppi import choose_next_skill_loop_given
+from unsupervised_skill_learning.mppi import mppi_next_skill_loop
 
 sys.path.append(os.path.abspath('./'))
 
@@ -1329,7 +1329,7 @@ class MPCSkillProvider(SkillProvider):
 
 
 def choose_next_skill_loop(dynamics, env_compute_reward_fn):
-    return choose_next_skill_loop_given(
+    return mppi_next_skill_loop(
         dynamics=dynamics,
         env_compute_reward_fn=env_compute_reward_fn,
         prior_type=FLAGS.prior_type,
@@ -1342,7 +1342,6 @@ def choose_next_skill_loop(dynamics, env_compute_reward_fn):
         env_name=FLAGS.environment + "_goal",
         reduced_observation=FLAGS.reduced_observation,
         mppi_gamma=FLAGS.mppi_gamma,
-        top_primitives=FLAGS.top_primitives
     )
 
 

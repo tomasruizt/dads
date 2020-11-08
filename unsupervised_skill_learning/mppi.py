@@ -1,4 +1,4 @@
-import functools
+from functools import partial
 from typing import Callable
 
 import numpy as np
@@ -6,119 +6,66 @@ import numpy as np
 from unsupervised_skill_learning.common_funcs import process_observation_given
 
 
-def choose_next_skill_loop_given(dynamics,
-                                 num_skills_to_plan: int,
-                                 prior_type: str,
-                                 skill_dim: int,
-                                 steps_per_skill: int,
-                                 refine_steps: int,
-                                 num_candidate_sequences,
-                                 smoothing_beta: float,
-                                 env_name: str,
-                                 reduced_observation: int,
-                                 env_compute_reward_fn: Callable,
-                                 mppi_gamma: float,
-                                 top_primitives: int,
-                                 sparsify_rewards=False):
-    skills_distr_params = []
-    for _ in range(num_skills_to_plan):
-        skills_distr_params.append(get_initial_skill_params(prior_type=prior_type, dim=skill_dim))
+def mppi_next_skill_loop(dynamics,
+                         num_skills_to_plan: int,
+                         prior_type: str,
+                         skill_dim: int,
+                         steps_per_skill: int,
+                         refine_steps: int,
+                         num_candidate_sequences,
+                         smoothing_beta: float,
+                         env_name: str,
+                         reduced_observation: int,
+                         env_compute_reward_fn: Callable,
+                         mppi_gamma: float,
+                         sparsify_rewards=False):
+    if prior_type == "uniform" or sparsify_rewards:
+        raise NotImplementedError
 
+    def process(obs):
+        return process_observation_given(obs, env_name=env_name, reduced_observation=reduced_observation)
+
+    covariance = 1
+    planned_skills_means = np.random.uniform(-1, 1, size=(num_skills_to_plan, skill_dim))
+    sample_mvn = partial(np.random.multivariate_normal,
+                         cov=covariance * np.eye(skill_dim),
+                         size=num_candidate_sequences)
     while True:
         cur_timestep = yield
         for _ in range(refine_steps):
-            candidate_skills_seqs = []
-            for _ in range(num_candidate_sequences):
-                skill_seq = [sample_skills(skills_distr_params[idx], prior_type=prior_type) for idx in range(num_skills_to_plan)]
-                candidate_skills_seqs.append(skill_seq)
-            candidate_skills_seqs = smooth(np.asarray(candidate_skills_seqs), beta=smoothing_beta)
-
-            def process(obs):
-                return process_observation_given(obs, env_name=env_name, reduced_observation=reduced_observation)
-
+            candidate_skills_seqs = np.tanh([sample_mvn(m) for m in planned_skills_means])
+            candidate_skills_seqs = smooth(candidate_skills_seqs, beta=smoothing_beta)
             running_cur_state = np.array([process(cur_timestep.observation)] * num_candidate_sequences)
             running_reward = np.zeros(num_candidate_sequences)
-            for planning_idx in range(num_skills_to_plan):
-                cur_skills = candidate_skills_seqs[:, planning_idx, :]
+            for cur_skills in candidate_skills_seqs:
                 for _ in range(steps_per_skill):
-                    predicted_next_state = dynamics.predict_state(running_cur_state, cur_skills)
+                    pred_next_state = dynamics.predict_state(running_cur_state, cur_skills)
+                    dense_reward = env_compute_reward_fn(running_cur_state, pred_next_state, info="dads")
+                    running_reward += dense_reward
+                    running_cur_state = pred_next_state
 
-                    # update running stuff
-                    dense_reward = env_compute_reward_fn(running_cur_state, predicted_next_state, info="dads")
-                    # modification for sparse_reward
-                    if sparsify_rewards:
-                        sparse_reward = 5.0 * (dense_reward > -2) + 0.0 * (dense_reward <= -2)
-                        running_reward += sparse_reward
-                    else:
-                        running_reward += dense_reward
+            planned_skills_means = update_means(candidate_seqs=candidate_skills_seqs,
+                                                rewards=running_reward,
+                                                mppi_gamma=mppi_gamma)
 
-                    running_cur_state = predicted_next_state
+        chosen_skill_mean = planned_skills_means[0]
+        yield chosen_skill_mean.copy()
 
-            update_parameters(candidate_skills_seqs, running_reward, skills_distr_params,
-                              prior_type=prior_type, mppi_gamma=mppi_gamma, top_primitives=top_primitives)
-
-        chosen_skill = get_mean_skill(skills_distr_params[0], prior_type=prior_type)
-        yield chosen_skill
-        skills_distr_params.pop(0)
-        skills_distr_params.append(get_initial_skill_params(prior_type=prior_type, dim=skill_dim))
+        random_skill = np.random.uniform(-1, 1, size=(1, skill_dim))
+        planned_skills_means = np.vstack((planned_skills_means[1:], random_skill))
 
 
-def smooth(primitive_sequences, beta):
+def smooth(skill_seqs, beta):
     β = beta
-    for idx in range(1, primitive_sequences.shape[1]):
-      primitive_sequences[:, idx, :] = β * primitive_sequences[:, idx - 1, :] + (1. - β) * primitive_sequences[:, idx, :]
-    return primitive_sequences
+    plan_len = len(skill_seqs)
+    for step in range(1, plan_len):
+        cur_skill = skill_seqs[step, ...]
+        prev_skill = skill_seqs[step - 1, ...]
+        skill_seqs[step, ...] = β * prev_skill + (1. - β) * cur_skill
+    return skill_seqs
 
 
-def get_initial_skill_params(prior_type: str, dim: int):
-    if prior_type == 'normal':
-        prior_mean = functools.partial(
-            np.random.multivariate_normal,
-            mean=np.zeros(dim),
-            cov=np.diag(np.ones(dim)))
-        prior_cov = lambda: 1.5 * np.diag(np.ones(dim))
-        return [prior_mean(), prior_cov()]
-
-    elif prior_type == 'uniform':
-        prior_low = lambda: np.array([-1.] * dim)
-        prior_high = lambda: np.array([1.] * dim)
-        return [prior_low(), prior_high()]
-
-
-def sample_skills(params, prior_type: str):
-    if prior_type == 'normal':
-        sample = np.random.multivariate_normal(*params)
-    elif prior_type == 'uniform':
-        sample = np.random.uniform(*params)
-    return np.clip(sample, -1., 1.)
-
-
-def update_parameters(candidates, reward, primitive_parameters,
-                      prior_type: str, mppi_gamma: float, top_primitives: int):
-    # update new primitive means for horizon sequence
-    # a more regular mppi
-    if prior_type == 'normal':
-        reward = np.exp(mppi_gamma * (reward - np.max(reward)))
-        reward = reward / (reward.sum() + 1e-10)
-        new_means = np.average(candidates, axis=0, weights=reward)
-
-        for idx, mean in enumerate(new_means):
-            primitive_parameters[idx][0] = mean
-        return
-
-    # TODO(architsh): closer to cross-entropy/shooting method, figure out a better update
-    elif prior_type == 'uniform':
-        chosen_candidates = candidates[np.argsort(reward)[-top_primitives:]]
-        candidates_min = np.min(chosen_candidates, axis=0)
-        candidates_max = np.max(chosen_candidates, axis=0)
-
-        for planning_idx in range(candidates.shape[1]):
-            primitive_parameters[planning_idx][0] = candidates_min[planning_idx]
-            primitive_parameters[planning_idx][1] = candidates_max[planning_idx]
-
-
-def get_mean_skill(params, prior_type: str):
-    if prior_type == 'normal':
-        return params[0]
-    elif prior_type == 'uniform':
-        return (params[0] + params[1]) / 2
+def update_means(candidate_seqs: np.ndarray, rewards: np.ndarray, mppi_gamma: float):
+    rewards = np.exp(mppi_gamma * (rewards - np.max(rewards)))
+    rewards = rewards / (rewards.sum() + 1e-10)
+    return np.average(candidate_seqs, axis=1, weights=rewards)
