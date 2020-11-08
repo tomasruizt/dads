@@ -84,6 +84,7 @@ flags.DEFINE_string('logdir', '~/tmp/dads', 'Directory for saving experiment dat
 flags.DEFINE_string('environment', 'point_mass', 'Name of the environment')
 flags.DEFINE_integer('max_env_steps', 200,
                      'Maximum number of steps in one episode')
+flags.DEFINE_integer('max_env_steps_eval', 200, 'Steps per episode when evaluating')
 flags.DEFINE_integer('reduced_observation', 0,
                      'Predict dynamics in a reduced observation space')
 flags.DEFINE_integer(
@@ -640,7 +641,7 @@ def eval_loop(eval_dir,
             preset_skill=preset_skill,
             min_steps_before_resample=FLAGS.min_steps_before_resample,
             resample_prob=FLAGS.resample_prob),
-        max_episode_steps=FLAGS.max_env_steps)
+        max_episode_steps=FLAGS.max_env_steps_eval)
 
     per_skill_evaluations = FLAGS.per_skill_evals
     predict_trajectory_steps = 0
@@ -1303,7 +1304,7 @@ def main(_):
                                               env_compute_reward_fn=eval_plan_env.compute_reward)
             evaluate_skill_provider(env=eval_plan_env,
                                     policy=eval_policy,
-                                    episode_length=FLAGS.max_env_steps,
+                                    episode_length=FLAGS.max_env_steps_eval,
                                     hide_coords_fn=hide_coords,
                                     clip_action_fn=clip_action,
                                     skill_provider=skill_provider)
