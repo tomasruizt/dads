@@ -504,16 +504,10 @@ def collect_experience(py_env,
 
     next_time_step = py_env.step(action_step.action)
     cur_return += next_time_step.reward
-
-    # all modification to observations and training will be done within the agent
-    # for buffer_ in buffer_list:
-    #   buffer_.add_batch(
-    #       from_transition(
-    #           nest_utils.batch_nested_array(time_step),
-    #           nest_utils.batch_nested_array(action_step),
-    #           nest_utils.batch_nested_array(next_time_step)))
-    replay_buffer.add(Transition(s=time_step.observation, a=action_step.action,
-                                 s_next=next_time_step.observation))
+    transition = Transition(s=time_step.observation,
+                            a=action_step.action,
+                            s_next=next_time_step.observation)
+    replay_buffer.add(transition)
 
     time_step = next_time_step
 
