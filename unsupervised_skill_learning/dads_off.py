@@ -79,6 +79,7 @@ nest = tf.nest
 
 # general hyperparameters
 flags.DEFINE_string('logdir', '~/tmp/dads', 'Directory for saving experiment data')
+flags.DEFINE_integer("seed", 0, "Seed of this experiment")
 
 # environment hyperparameters
 flags.DEFINE_string('environment', 'point_mass', 'Name of the environment')
@@ -649,7 +650,7 @@ def eval_loop(eval_dir,
     for eval_idx in range(per_skill_evaluations):
 
       # record videos for sampled trajectories
-      do_record_video = False and vid_name is not None and eval_idx == 0
+      do_record_video = vid_name is not None and eval_idx == 0
       if do_record_video:
         full_vid_name = vid_name + '_' + str(skill_idx)
         traj_env = video_wrapper.VideoWrapper(eval_env, base_path=eval_dir, base_name=full_vid_name)
@@ -822,7 +823,7 @@ def main(_):
   root_dir = os.path.abspath(os.path.expanduser(FLAGS.logdir))
   if not tf.io.gfile.exists(root_dir):
     tf.io.gfile.makedirs(root_dir)
-  log_dir = os.path.join(root_dir, FLAGS.environment)
+  log_dir = os.path.join(root_dir, FLAGS.environment, f"seed-{FLAGS.seed}")
   
   if not tf.io.gfile.exists(log_dir):
     tf.io.gfile.makedirs(log_dir)
