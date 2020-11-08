@@ -991,18 +991,12 @@ def main(_):
         policy=agent.policy,
         global_step=global_step)
 
-    # TODO: Pickle the Replay Buffer
-    # rb_checkpointer = common.Checkpointer(
-    #     ckpt_dir=os.path.join(save_dir, 'replay_buffer'),
-    #     max_to_keep=1,
-    #     replay_buffer=rbuffer)
-
     gt.stamp('setup', quick_print=True)
 
     with tf.compat.v1.Session().as_default() as sess:
       train_checkpointer.initialize_or_restore(sess)
-      # TODO: Restore replay buffer
-      # rb_checkpointer.initialize_or_restore(sess)
+      replay_buffer_saving_fpath = os.path.join(save_dir, 'replay_buffer')
+      buffer.load(fpath=replay_buffer_saving_fpath)
       agent.set_sessions(
           initialize_or_restore_skill_dynamics=True, session=sess)
       uniform_resampler.tf_session = sess
@@ -1060,8 +1054,7 @@ def main(_):
             print('Saving stuff')
             train_checkpointer.save(global_step=iter_count)
             policy_checkpointer.save(global_step=iter_count)
-            # TODO: Save the replay buffer
-            # rb_checkpointer.save(global_step=iter_count)
+            buffer.save(fpath=replay_buffer_saving_fpath)
             agent.save_variables(global_step=iter_count)
 
             np.save(os.path.join(log_dir, 'sample_count'), sample_count)
