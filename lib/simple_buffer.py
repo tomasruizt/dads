@@ -1,5 +1,6 @@
+import os
 from typing import NamedTuple, Sequence, Generic, TypeVar, List
-
+import pickle
 import numpy as np
 from tf_agents.trajectories.time_step import StepType
 from tf_agents.trajectories.trajectory import Trajectory
@@ -27,12 +28,28 @@ class SimpleBuffer:
     def clear(self):
         self._store = CircularList(max_size=self._capacity)
 
+    def save(self, fpath: str):
+        with open(fpath, "wb") as file:
+            pickle.dump(obj=self._store, file=file)
+
+    def load(self, fpath: str):
+        if not os.path.exists(fpath):
+            return
+
+        with open(fpath, "rb") as file:
+            self._store = pickle.load(file)
+            assert isinstance(self._store, CircularList)
+            assert self._store.max_size == self._capacity,\
+                f"Different capacities, {self._store.max_size} != {self._capacity}"
+        print("Restored Replay Buffer")
+
 
 T = TypeVar("T")
 
 
 class CircularList(Generic[T]):
     def __init__(self, max_size: int):
+        self.max_size = max_size
         self._buffer: List[T] = [None] * max_size
         self._cur_head = 0
         self._cur_size = 0
