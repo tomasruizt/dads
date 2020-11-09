@@ -1,9 +1,12 @@
+from abc import ABC
+from enum import Enum
+
 import sys
 from collections import OrderedDict
 from functools import partial
 
 import numpy as np
-from gym import Wrapper, ObservationWrapper
+from gym import Wrapper, ObservationWrapper, GoalEnv
 from gym.envs.robotics import FetchPickAndPlaceEnv, FetchSlideEnv, FetchEnv, FetchReachEnv
 from gym.wrappers import FilterObservation, FlattenObservation
 from multi_goal.envs.toy_labyrinth_env import ToyLab
@@ -14,8 +17,8 @@ from envs.point2d_env import Point2DEnv
 def make_toylab_dads_env():
     env = DADSCustomToyLabEnv()
     env = ObsAsOrderedDict(env)
-    env = DadsRewardWrapper(env)
-    env = FilterObservation(env, filter_keys=["achieved_goal", "observation"])
+    env = DADSWrapper(env)
+    env = FilterObservation(env, filter_keys=["achieved_goal"])
     return FlattenObservation(env)
 
 
@@ -24,8 +27,8 @@ class DADSCustomToyLabEnv(ToyLab):
         super().__init__(max_episode_len=sys.maxsize, use_random_starting_pos=True)
 
     @staticmethod
-    def achieved_goal_from_state(obs: np.ndarray) -> np.ndarray:
-        return obs[..., :2] if _is_batch(obs) else obs[:2]
+    def achieved_goal_from_state(state: np.ndarray) -> np.ndarray:
+        return state[..., :2] if _is_batch(state) else state[:2]
 
     def compute_reward(self, achieved_obs, desired_obs, info):
         achieved_goal = self.achieved_goal_from_state(achieved_obs)
@@ -50,7 +53,7 @@ class ObsAsOrderedDict(ObservationWrapper):
 
 
 def make_point2d_dads_env():
-    return DadsRewardWrapper(Point2DEnv())
+    return DADSWrapper(Point2DEnv())
 
 
 def make_fetch_pick_and_place_env():
@@ -66,7 +69,7 @@ def make_fetch_reach_env():
 
 
 def _process_fetch_env(env: FetchEnv):
-    env = DadsRewardWrapper(env)
+    env = DADSWrapper(env)
     env = FilterObservation(env, filter_keys=["observation"])
     return FlattenObservation(env)
 
@@ -95,19 +98,36 @@ class FixedGoalFetchSlideEnv(FetchSlideEnv):
 
 class DADSCustomFetchReachEnv(FetchReachEnv):
     @staticmethod
-    def achieved_goal_from_state(obs: np.ndarray) -> np.ndarray:
-        return obs[..., :3] if _is_batch(obs) else obs[:3]
+    def achieved_goal_from_state(state: np.ndarray) -> np.ndarray:
+        return state[..., :3] if _is_batch(state) else state[:3]
 
 
-class DadsRewardWrapper(Wrapper):
+class DADSEnv(ABC, GoalEnv):
+    class OBS_TYPE(Enum):
+        DYNAMICS_OBS = "DYNAMICS_OBS"
+        FULL_OBS = "FULL_OBS"
+
+    def to_dynamics_obs(self, obs: np.ndarray) -> np.ndarray:
+        raise NotImplementedError
+
+
+class DADSWrapper(Wrapper, DADSEnv):
     def compute_reward(self, achieved_goal, desired_goal, info):
-        if info == "dads":
-            return self._dads_reward(achieved_goal, desired_goal)
+        if info in DADSEnv.OBS_TYPE:
+            return self._dads_reward(achieved_goal, desired_goal, obs_type=info)
         return self.env.compute_reward(achieved_goal, desired_goal, info)
 
-    def _dads_reward(self, cur_state, next_state):
-        achieved_goal = self.env.achieved_goal_from_state(cur_state)
-        next_achieved_goal = self.env.achieved_goal_from_state(next_state)
+    def _dads_reward(self, cur_obs, next_obs, obs_type: DADSEnv.OBS_TYPE):
+        achieved_goal, next_achieved_goal = cur_obs, next_obs
+
+        need_reduction = obs_type == DADSEnv.OBS_TYPE.FULL_OBS
+        if need_reduction:
+            achieved_goal = self.env.achieved_goal_from_state(cur_obs)
+            next_achieved_goal = self.env.achieved_goal_from_state(next_obs)
+
         goal = np.broadcast_to(self.goal, achieved_goal.shape)
         reward = lambda achieved: self.env.compute_reward(achieved, goal, info=None)
         return reward(next_achieved_goal) - reward(achieved_goal)
+
+    def to_dynamics_obs(self, obs: np.ndarray) -> np.ndarray:
+        return self.env.achieved_goal_from_state(state=obs)
