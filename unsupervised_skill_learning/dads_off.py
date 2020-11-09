@@ -18,7 +18,7 @@ from __future__ import print_function
 
 import os
 import io
-from typing import List, Callable, Generator
+from typing import List, Generator
 import gtimer as gt
 from absl import flags, logging
 
@@ -28,7 +28,7 @@ from tf_agents.trajectories.time_step import TimeStep
 
 from density_estimation import DensityEstimator
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
-    make_point2d_dads_env, make_fetch_reach_env
+    make_point2d_dads_env, make_fetch_reach_env, DADSEnv
 from lib.simple_buffer import SimpleBuffer, Transition
 from unsupervised_skill_learning.common_funcs import process_observation_given, \
     hide_coordinates, clip, SliderSkillProvider, evaluate_skill_provider, \
@@ -256,6 +256,24 @@ custom_envs_ctors = dict(
 
 
 def get_environment(env_name='point_mass'):
+    env = get_env_without_postprocess(env_name=env_name)
+    return add_to_dynamics_obs_fn(env)
+
+
+def add_to_dynamics_obs_fn(env):
+    if hasattr(env, "to_dynamics_obs"):
+        return env
+
+    def to_dynamics_obs(obs):
+        return process_observation_given(
+            obs=obs,
+            env_name=FLAGS.environment,
+            reduced_observation=FLAGS.reduced_observation)
+    env.to_dynamics_obs = to_dynamics_obs
+    return env
+
+
+def get_env_without_postprocess(env_name: str):
   global observation_omit_size
 
   simple_name = env_name.replace("_goal", "")
@@ -333,7 +351,8 @@ def hide_coords(time_step):
 def relabel_skill(trajectory_sample,
                   relabel_type=None,
                   cur_policy=None,
-                  cur_skill_dynamics=None):
+                  cur_skill_dynamics=None,
+                  env=None):
   global observation_omit_size
   if relabel_type is None or ('importance_sampling' in relabel_type and
                               FLAGS.is_clip_eps <= 1.0):
@@ -434,8 +453,8 @@ def relabel_skill(trajectory_sample,
 
       # max over posterior log probability is exactly the max over log-prob of transitin under skill-dynamics
       posterior_log_probs = cur_skill_dynamics.get_log_prob(
-          process_observation(cur_observations), alt_skills,
-          process_observation(next_observations))
+          env.to_dynamics_obs(cur_observations), alt_skills,
+          env.to_dynamics_obs(next_observations))
       if FLAGS.debug_skill_relabelling:
         print('\n dynamics_log_probs analysis----', idx,
               time_steps.observation[idx, -FLAGS.num_skills:])
@@ -464,13 +483,6 @@ def relabel_skill(trajectory_sample,
       observation=traj_observation)
 
   return new_trajectory_sample, None
-
-
-# hard-coding the state-space for dynamics
-def process_observation(observation):
-  reduced_observation = FLAGS.reduced_observation
-  environment = FLAGS.environment
-  return process_observation_given(observation, environment, reduced_observation)
 
 
 def collect_experience(py_env,
@@ -557,8 +569,8 @@ def run_on_env(env,
 
     if dynamics is not None:
       if FLAGS.reduced_observation:
-        cur_observation, next_observation = process_observation(
-            cur_observation), process_observation(next_observation)
+        process_observation = env.to_dynamics_obs
+        cur_observation, next_observation = process_observation(cur_observation), process_observation(next_observation)
       logp = dynamics.get_log_prob(
           np.expand_dims(cur_observation, 0), np.expand_dims(cur_skill, 0),
           np.expand_dims(next_observation, 0))
@@ -720,7 +732,7 @@ def eval_planning(env,
   # planning loop
   for _ in range(episode_horizon // primitive_horizon):
     running_reward = np.zeros(latent_action_space_size)
-    running_cur_state = np.array([process_observation(time_step.observation)] *
+    running_cur_state = np.array([env.to_dynamics_obs(time_step.observation)] *
                                  latent_action_space_size)
     cur_coord_predicted = [np.expand_dims(running_cur_state[:, :2], 1)]
 
@@ -731,7 +743,7 @@ def eval_planning(env,
       cur_coord_predicted.append(np.expand_dims(predicted_next_state[:, :2], 1))
 
       # update running stuff
-      running_reward += env.compute_reward(running_cur_state, predicted_next_state, info="dads")
+      running_reward += env.compute_reward(running_cur_state, predicted_next_state, info=DADSEnv.OBS_TYPE.FULL_OBS)
       running_cur_state = predicted_next_state
 
     predicted_coords.append(np.concatenate(cur_coord_predicted, axis=1))
@@ -865,11 +877,9 @@ def main(_):
 
     # all specifications required for all networks and agents
     py_action_spec = py_env.action_spec()
-    tf_action_spec = tensor_spec.from_spec(
-        py_action_spec)  # policy, critic action spec
+    tf_action_spec = tensor_spec.from_spec(py_action_spec)  # policy, critic action spec
     env_obs_spec = py_env.observation_spec()
-    py_env_time_step_spec = ts.time_step_spec(
-        env_obs_spec)  # replay buffer time_step spec
+    py_env_time_step_spec = ts.time_step_spec(env_obs_spec)  # replay buffer time_step spec
     if observation_omit_size > 0:
       agent_obs_spec = array_spec.BoundedArraySpec(
           (env_obs_spec.shape[0] - observation_omit_size,),
@@ -879,13 +889,11 @@ def main(_):
           name=env_obs_spec.name)  # policy, critic observation spec
     else:
       agent_obs_spec = env_obs_spec
-    py_agent_time_step_spec = ts.time_step_spec(
-        agent_obs_spec)  # policy, critic time_step spec
+    py_agent_time_step_spec = ts.time_step_spec(agent_obs_spec)  # policy, critic time_step spec
     tf_agent_time_step_spec = tensor_spec.from_spec(py_agent_time_step_spec)
 
     if not FLAGS.reduced_observation:
-      skill_dynamics_observation_size = (
-          py_env_time_step_spec.observation.shape[0] - FLAGS.num_skills)
+      skill_dynamics_observation_size = (py_env_time_step_spec.observation.shape[0] - FLAGS.num_skills)
     else:
       skill_dynamics_observation_size = FLAGS.reduced_observation
 
@@ -911,7 +919,7 @@ def main(_):
         # DADS parameters
         save_dir,
         skill_dynamics_observation_size,
-        observation_modify_fn=process_observation,
+        observation_modify_fn=py_env.to_dynamics_obs,
         restrict_input_size=observation_omit_size,
         latent_size=FLAGS.num_skills,
         latent_prior=FLAGS.skill_type,
@@ -959,8 +967,7 @@ def main(_):
     relabel_policy = py_tf_policy.PyTFPolicy(agent.collect_policy)
 
     # constructing a replay buffer, need a python spec
-    policy_step_spec = policy_step.PolicyStep(
-        action=py_action_spec, state=(), info=())
+    policy_step_spec = policy_step.PolicyStep(action=py_action_spec, state=(), info=())
 
     if FLAGS.skill_dynamics_relabel_type is not None and 'importance_sampling' in FLAGS.skill_dynamics_relabel_type and FLAGS.is_clip_eps > 1.0:
       policy_step_spec = policy_step_spec._replace(
@@ -971,8 +978,7 @@ def main(_):
 
     trajectory_spec = from_transition(py_env_time_step_spec, policy_step_spec,
                                       py_env_time_step_spec)
-    capacity = FLAGS.replay_buffer_capacity
-    buffer = SimpleBuffer(capacity=capacity)
+    buffer = SimpleBuffer(capacity=FLAGS.replay_buffer_capacity)
 
     state_dim = trajectory_spec.observation.shape[0] - FLAGS.num_skills
     uniform_resampler = UniformResampler(state_dim=state_dim, buffer=buffer, tf_graph=agent._graph)
@@ -1085,7 +1091,8 @@ def main(_):
                 trajectory_sample,
                 relabel_type='importance_sampling',
                 cur_policy=relabel_policy,
-                cur_skill_dynamics=agent.skill_dynamics)
+                cur_skill_dynamics=agent.skill_dynamics,
+                env=py_env)
             print(is_weights)
 
           # DENSITY TRAINING
@@ -1122,10 +1129,10 @@ def main(_):
                 relabel_type=FLAGS.skill_dynamics_relabel_type,
                 cur_policy=relabel_policy,
                 cur_skill_dynamics=agent.skill_dynamics)
-            input_obs = process_observation(
+            input_obs = py_env.to_dynamics_obs(
                 trajectory_sample.observation[:, 0, :-FLAGS.num_skills])
             cur_skill = trajectory_sample.observation[:, 0, -FLAGS.num_skills:]
-            target_obs = process_observation(
+            target_obs = py_env.to_dynamics_obs(
                 trajectory_sample.observation[:, 1, :-FLAGS.num_skills])
             if FLAGS.clear_buffer_every_iter:
               agent.skill_dynamics.train(
@@ -1294,8 +1301,7 @@ def main(_):
                 primitive_horizon=FLAGS.primitive_horizon
             )
         else:
-            skill_provider = MPCSkillProvider(dynamics=agent.skill_dynamics,
-                                              env_compute_reward_fn=eval_plan_env.compute_reward)
+            skill_provider = MPCSkillProvider(dynamics=agent.skill_dynamics, env=eval_plan_env)
             evaluate_skill_provider(env=eval_plan_env,
                                     policy=eval_policy,
                                     episode_length=FLAGS.max_env_steps_eval,
@@ -1307,26 +1313,23 @@ def main(_):
 
 
 class MPCSkillProvider(SkillProvider):
-    def __init__(self, dynamics, env_compute_reward_fn: Callable):
-        self._env_compute_reward_fn = env_compute_reward_fn
+    def __init__(self, dynamics, env: DADSEnv):
         self._dynamics = dynamics
         self._loop: Generator = None
+        self._env = env
 
     def start_episode(self):
-        self._loop = choose_next_skill_loop(
-            dynamics=self._dynamics,
-            env_compute_reward_fn=self._env_compute_reward_fn
-        )
+        self._loop = choose_next_skill_loop(dynamics=self._dynamics, env=self._env)
 
     def get_skill(self, ts: TimeStep):
         next(self._loop)
         return self._loop.send(ts)
 
 
-def choose_next_skill_loop(dynamics, env_compute_reward_fn):
+def choose_next_skill_loop(dynamics, env: DADSEnv):
     return mppi_next_skill_loop(
         dynamics=dynamics,
-        env_compute_reward_fn=env_compute_reward_fn,
+        env=env,
         prior_type=FLAGS.prior_type,
         skill_dim=FLAGS.num_skills,
         num_skills_to_plan=FLAGS.planning_horizon,
@@ -1334,8 +1337,6 @@ def choose_next_skill_loop(dynamics, env_compute_reward_fn):
         refine_steps=FLAGS.refine_steps,
         num_candidate_sequences=FLAGS.num_candidate_sequences,
         smoothing_beta=FLAGS.smoothing_beta,
-        env_name=FLAGS.environment + "_goal",
-        reduced_observation=FLAGS.reduced_observation,
         mppi_gamma=FLAGS.mppi_gamma,
     )
 

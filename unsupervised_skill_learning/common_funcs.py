@@ -5,11 +5,15 @@ import numpy as np
 import tensorflow as tf
 from tf_agents.trajectories.time_step import TimeStep
 
+from envs.custom_envs import DADSEnv
 from lib import py_tf_policy
 from skill_slider import create_sliders_widget
 
 
 def process_observation_given(obs, env_name: str, reduced_observation: int):
+  if reduced_observation == 0:
+      return obs
+
   def _shape_based_observation_processing(observation, dim_idx):
     if len(observation.shape) == 1:
       return observation[dim_idx:dim_idx + 1]
@@ -17,10 +21,6 @@ def process_observation_given(obs, env_name: str, reduced_observation: int):
       return observation[:, dim_idx:dim_idx + 1]
     elif len(observation.shape) == 3:
       return observation[:, :, dim_idx:dim_idx + 1]
-
-  # for consistent use
-  if reduced_observation == 0:
-    return obs
 
   # process observation for dynamics with reduced observation space
   if env_name == 'HalfCheetah-v1':
@@ -169,10 +169,10 @@ def evaluate_skill_provider(
             env.render("human")
 
 
-def check_reward_fn(env):
+def check_reward_fn(env: DADSEnv):
     obs1 = env.observation_space.sample()
     obs2 = env.observation_space.sample()
-    reward_dads = env.compute_reward(obs1, obs2, info="dads")
+    reward_dads = env.compute_reward(obs1, obs2, info=DADSEnv.OBS_TYPE.FULL_OBS)
 
     to_goal = env.achieved_goal_from_state
     reward_classic = env.compute_reward(to_goal(obs1), to_goal(obs2), info=None)

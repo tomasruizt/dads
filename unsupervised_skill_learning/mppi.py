@@ -1,9 +1,6 @@
 from functools import partial
-from typing import Callable
-
 import numpy as np
-
-from unsupervised_skill_learning.common_funcs import process_observation_given
+from envs.custom_envs import DADSEnv
 
 
 def mppi_next_skill_loop(dynamics,
@@ -14,16 +11,11 @@ def mppi_next_skill_loop(dynamics,
                          refine_steps: int,
                          num_candidate_sequences,
                          smoothing_beta: float,
-                         env_name: str,
-                         reduced_observation: int,
-                         env_compute_reward_fn: Callable,
+                         env: DADSEnv,
                          mppi_gamma: float,
                          sparsify_rewards=False):
     if prior_type == "uniform" or sparsify_rewards:
         raise NotImplementedError
-
-    def process(obs):
-        return process_observation_given(obs, env_name=env_name, reduced_observation=reduced_observation)
 
     covariance = 1
     planned_skills_means = np.random.uniform(-1, 1, size=(num_skills_to_plan, skill_dim))
@@ -35,12 +27,12 @@ def mppi_next_skill_loop(dynamics,
         for _ in range(refine_steps):
             candidate_skills_seqs = np.tanh([sample_mvn(m) for m in planned_skills_means])
             candidate_skills_seqs = smooth(candidate_skills_seqs, beta=smoothing_beta)
-            running_cur_state = np.array([process(cur_timestep.observation)] * num_candidate_sequences)
+            running_cur_state = np.array([env.to_dynamics_obs(cur_timestep.observation)] * num_candidate_sequences)
             running_reward = np.zeros(num_candidate_sequences)
             for cur_skills in candidate_skills_seqs:
                 for _ in range(steps_per_skill):
                     pred_next_state = dynamics.predict_state(running_cur_state, cur_skills)
-                    dense_reward = env_compute_reward_fn(running_cur_state, pred_next_state, info="dads")
+                    dense_reward = env.compute_reward(running_cur_state, pred_next_state, info=DADSEnv.OBS_TYPE.DYNAMICS_OBS)
                     running_reward += dense_reward
                     running_cur_state = pred_next_state
 
