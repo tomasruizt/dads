@@ -103,11 +103,16 @@ class DADSCustomFetchReachEnv(FetchReachEnv):
 
 
 class DADSEnv(ABC, GoalEnv):
+    goal: np.ndarray
+
     class OBS_TYPE(Enum):
         DYNAMICS_OBS = "DYNAMICS_OBS"
         FULL_OBS = "FULL_OBS"
 
     def to_dynamics_obs(self, obs: np.ndarray) -> np.ndarray:
+        raise NotImplementedError
+
+    def achieved_goal_from_state(self, state: np.ndarray) -> np.ndarray:
         raise NotImplementedError
 
 
@@ -131,3 +136,6 @@ class DADSWrapper(Wrapper, DADSEnv):
 
     def to_dynamics_obs(self, obs: np.ndarray) -> np.ndarray:
         return self.env.achieved_goal_from_state(state=obs)
+
+    def achieved_goal_from_state(self, state: np.ndarray) -> np.ndarray:
+        return self.env.achieved_goal_from_state(state=state)
