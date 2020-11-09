@@ -44,6 +44,7 @@ class DADSCustomToyLabEnv(ToyLab):
 
 
 def _is_batch(x: np.ndarray) -> bool:
+    assert x.ndim < 3
     return x.ndim == 2
 
 
