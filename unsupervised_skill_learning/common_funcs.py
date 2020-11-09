@@ -10,8 +10,8 @@ from lib import py_tf_policy
 from skill_slider import create_sliders_widget
 
 
-def process_observation_given(obs, env_name: str, reduced_observation: int):
-  if reduced_observation == 0:
+def process_observation_given(obs, env_name: str, reduced_observation_size: int):
+  if reduced_observation_size == 0:
       return obs
 
   def _shape_based_observation_processing(observation, dim_idx):
@@ -33,10 +33,10 @@ def process_observation_given(obs, env_name: str, reduced_observation: int):
     qpos_dim = 36
 
   # x-axis
-  if reduced_observation in [1, 5]:
+  if reduced_observation_size in [1, 5]:
     red_obs = [_shape_based_observation_processing(obs, 0)]
   # x-y plane
-  elif reduced_observation in [2, 6]:
+  elif reduced_observation_size in [2, 6]:
     if env_name == 'Ant-v1' or 'DKitty' in env_name or 'DClaw' in env_name:
       red_obs = [
           _shape_based_observation_processing(obs, 0),
@@ -48,8 +48,8 @@ def process_observation_given(obs, env_name: str, reduced_observation: int):
           _shape_based_observation_processing(obs, qpos_dim)
       ]
   # x-y plane, x-y velocities
-  elif reduced_observation in [4, 8]:
-    if reduced_observation == 4 and 'DKittyPush' in env_name:
+  elif reduced_observation_size in [4, 8]:
+    if reduced_observation_size == 4 and 'DKittyPush' in env_name:
       # position of the agent + relative position of the box
       red_obs = [
           _shape_based_observation_processing(obs, 0),
@@ -66,7 +66,7 @@ def process_observation_given(obs, env_name: str, reduced_observation: int):
       ]
 
   # (x, y, orientation), works only for ant, point_mass
-  elif reduced_observation == 3:
+  elif reduced_observation_size == 3:
     if env_name in ['Ant-v1', 'point_mass']:
       red_obs = [
           _shape_based_observation_processing(obs, 0),
@@ -85,28 +85,28 @@ def process_observation_given(obs, env_name: str, reduced_observation: int):
                                               obs.shape[-1] - 5)
       ]
 
-  if reduced_observation in [5, 6, 8]:
+  if reduced_observation_size in [5, 6, 8]:
     red_obs += [
         _shape_based_observation_processing(obs,
                                             obs.shape[1] - idx)
         for idx in range(1, 5)
     ]
 
-  if reduced_observation == 36 and 'DKitty' in env_name:
+  if reduced_observation_size == 36 and 'DKitty' in env_name:
     red_obs = [
         _shape_based_observation_processing(obs, idx)
         for idx in range(qpos_dim)
     ]
 
   # x, y, z and the rotation quaternion
-  if reduced_observation == 7 and env_name == 'HandBlock':
+  if reduced_observation_size == 7 and env_name == 'HandBlock':
     red_obs = [
         _shape_based_observation_processing(obs, obs.shape[-1] - idx)
         for idx in range(1, 8)
     ][::-1]
 
   # the rotation quaternion
-  if reduced_observation == 4 and env_name == 'HandBlock':
+  if reduced_observation_size == 4 and env_name == 'HandBlock':
     red_obs = [
         _shape_based_observation_processing(obs, obs.shape[-1] - idx)
         for idx in range(1, 5)

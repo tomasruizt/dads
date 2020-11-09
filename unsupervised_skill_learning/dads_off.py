@@ -86,7 +86,7 @@ flags.DEFINE_string('environment', 'point_mass', 'Name of the environment')
 flags.DEFINE_integer('max_env_steps', 200,
                      'Maximum number of steps in one episode')
 flags.DEFINE_integer('max_env_steps_eval', 200, 'Steps per episode when evaluating')
-flags.DEFINE_integer('reduced_observation', 0,
+flags.DEFINE_integer('reduced_observation_size', 0,
                      'Predict dynamics in a reduced observation space')
 flags.DEFINE_integer(
     'min_steps_before_resample', 50,
@@ -268,7 +268,7 @@ def add_to_dynamics_obs_fn(env):
         return process_observation_given(
             obs=obs,
             env_name=FLAGS.environment,
-            reduced_observation=FLAGS.reduced_observation)
+            reduced_observation_size=FLAGS.reduced_observation_size)
     env.to_dynamics_obs = to_dynamics_obs
     return env
 
@@ -568,7 +568,7 @@ def run_on_env(env,
       next_observation = next_time_step.observation
 
     if dynamics is not None:
-      if FLAGS.reduced_observation:
+      if FLAGS.reduced_observation_size:
         process_observation = env.to_dynamics_obs
         cur_observation, next_observation = process_observation(cur_observation), process_observation(next_observation)
       logp = dynamics.get_log_prob(
@@ -892,10 +892,10 @@ def main(_):
     py_agent_time_step_spec = ts.time_step_spec(agent_obs_spec)  # policy, critic time_step spec
     tf_agent_time_step_spec = tensor_spec.from_spec(py_agent_time_step_spec)
 
-    if not FLAGS.reduced_observation:
+    if not FLAGS.reduced_observation_size:
       skill_dynamics_observation_size = (py_env_time_step_spec.observation.shape[0] - FLAGS.num_skills)
     else:
-      skill_dynamics_observation_size = FLAGS.reduced_observation
+      skill_dynamics_observation_size = FLAGS.reduced_observation_size
 
     # TODO(architsh): Shift co-ordinate hiding to actor_net and critic_net (good for futher image based processing as well)
     actor_net = actor_distribution_network.ActorDistributionNetwork(
