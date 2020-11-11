@@ -518,10 +518,11 @@ def collect_experience(py_env,
 
     next_time_step = py_env.step(action_step.action)
     cur_return += next_time_step.reward
-    transition = Transition(s=time_step.observation,
-                            a=action_step.action,
-                            s_next=next_time_step.observation)
-    replay_buffer.add(transition)
+    if (not time_step.is_last()) and (not next_time_step.is_last()):
+        transition = Transition(s=time_step.observation,
+                                a=action_step.action,
+                                s_next=next_time_step.observation)
+        replay_buffer.add(transition)
 
     time_step = next_time_step
 
@@ -821,7 +822,7 @@ def enter_manual_control_mode(eval_policy: py_tf_policy.PyTFPolicy):
         episode_length=100,
         hide_coords_fn=hide_coords,
         clip_action_fn=clip_action,
-        skill_provider=SliderSkillProvider()
+        skill_provider=SliderSkillProvider(num_sliders=FLAGS.num_skills)
     )
 
 
@@ -1220,10 +1221,10 @@ def main(_):
           if FLAGS.clear_buffer_every_iter:
             raise NotImplementedError
 
-          # within train loop evaluation
-          if (FLAGS.record_freq is not None and
-              iter_count % FLAGS.record_freq == 0 and
-              iter_count > 0):
+          do_perform_eval = (FLAGS.record_freq is not None and
+                             iter_count % FLAGS.record_freq == 0 and
+                             iter_count > 0)
+          if do_perform_eval:
             cur_vid_dir = os.path.join(log_dir, 'videos', str(iter_count))
             tf.io.gfile.makedirs(cur_vid_dir)
             eval_loop(
