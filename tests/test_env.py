@@ -6,11 +6,15 @@ from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env
     FixedGoalFetchPickAndPlaceEnv, FixedGoalFetchSlideEnv, make_point2d_dads_env, \
     DADSCustomFetchReachEnv, make_fetch_reach_env, make_toylab_dads_env, DADSEnv
 
-envs_fns = [
+convex_envs_fns = [
+    make_fetch_reach_env,
     make_fetch_pick_and_place_env,
     make_fetch_slide_env,
-    make_fetch_reach_env,
     make_point2d_dads_env,
+]
+
+envs_fns = [
+    *convex_envs_fns,
     make_toylab_dads_env
 ]
 
@@ -39,9 +43,23 @@ def test_env_trajectories_dont_env(env_fn):
     assert len(dones) > 0 and not any(dones)
 
 
+@pytest.mark.parametrize("env_fn", convex_envs_fns)
+def test_reward_is_convex(env_fn):
+    env: DADSEnv = env_fn()
+    obs_type = DADSEnv.OBS_TYPE.DYNAMICS_OBS
+    obs = np.asarray([_rand_obs(env, obs_type=obs_type) for _ in range(5)])
+    goal = np.vstack([env.goal] * 5)
+    reward = partial(env.compute_reward, info=None)
+    assert np.all(reward(obs, goal) < reward(_closer(obs, goal), goal))
+
+
+def _closer(x_from, x_to):
+    return 0.5 * (x_from + x_to)
+
+
 @pytest.mark.parametrize("obs_type",
                          [DADSEnv.OBS_TYPE.FULL_OBS, DADSEnv.OBS_TYPE.DYNAMICS_OBS])
-def test_env_reward_fn(env_fn, obs_type):
+def test_env_dads_reward_fn(env_fn, obs_type):
     env: DADSEnv = env_fn()
     env.observation_space.seed(0)
     env.reset()
