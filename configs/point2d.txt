@@ -5,27 +5,30 @@
 --run_train=1
 --num_skills=2
 --skill_type=cont_uniform
+--random_skills=100
 
 --save_model=dads
---vid_name=skill
 
---save_freq=100
---record_freq=100
+--save_freq=25
+--record_freq=25
 --num_evals=5
 --per_skill_evals=10
---num_epochs=1001
+--num_epochs=201
 
 --replay_buffer_capacity=10000
 --initial_collect_steps=300
 --collect_steps=300
 --resample_prob=1
---steps_before_resample=15
+--steps_before_resample=20
 
 --skill_dyn_train_steps=64
 --skill_dyn_batch_size=256
 --agent_train_steps=128
 --agent_batch_size=256
 --hidden_layer_size=128
+
+# Skill dynamics
+--num_components=1
 
 # MPPI
 --run_eval=1
