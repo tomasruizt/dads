@@ -289,8 +289,7 @@ class SkillDynamics:
             reuse=tf.compat.v1.AUTO_REUSE)
         self.output_norm_layer = tf.compat.v1.layers.BatchNormalization(
             scale=False, center=False, name='output_normalization')
-        next_timesteps = self.output_norm_layer(
-            next_timesteps, training=is_training)
+        next_timesteps = self.output_norm_layer(next_timesteps, training=is_training)
 
       if self._network_type == 'default':
         self.base_distribution = self._default_graph(timesteps, actions)
@@ -386,16 +385,14 @@ class SkillDynamics:
     else:
       run_op = self.dyn_min_op
 
+    feed_dict = self._get_dict(timesteps, actions, next_timesteps,
+                               batch_weights=batch_weights, batch_size=batch_size, batch_norm=True)
     for _ in range(num_steps):
-      self._session.run(
-          run_op,
-          feed_dict=self._get_dict(
-              timesteps,
-              actions,
-              next_timesteps,
-              batch_weights=batch_weights,
-              batch_size=batch_size,
-              batch_norm=True))
+        self._session.run(run_op, feed_dict)
+
+    next_timesteps_pred = self.predict_state(timesteps=timesteps, actions=actions)
+    mse = _mse(next_timesteps_pred, timesteps)
+    return dict(mse=mse)
 
   def get_log_prob(self, timesteps, actions, next_timesteps):
     if not self._use_placeholders:
@@ -431,3 +428,7 @@ class SkillDynamics:
 
     pred_state += timesteps
     return pred_state
+
+
+def _mse(x1, x2):
+    return np.mean(np.subtract(x1, x2)**2)

@@ -1121,6 +1121,7 @@ def main(_):
               trajectories_list = [get_batch() for _ in range(FLAGS.skill_dyn_train_steps)]
               gt.stamp("[dyn]sample")
 
+          dynamics_mses = []
           # TODO(architsh): clear_buffer_every_iter needs to fix these as well
           for trajectory_sample in trajectories_list:
             # is_weights is None usually, unless relabelling involves importance_sampling
@@ -1135,7 +1136,7 @@ def main(_):
             target_obs = py_env.to_dynamics_obs(
                 trajectory_sample.observation[:, 1, :-FLAGS.num_skills])
             if FLAGS.clear_buffer_every_iter:
-              agent.skill_dynamics.train(
+              info = agent.skill_dynamics.train(
                   input_obs,
                   cur_skill,
                   target_obs,
@@ -1143,13 +1144,14 @@ def main(_):
                   batch_weights=is_weights,
                   num_steps=FLAGS.skill_dyn_train_steps)
             else:
-              agent.skill_dynamics.train(
+              info = agent.skill_dynamics.train(
                   input_obs,
                   cur_skill,
                   target_obs,
                   batch_size=-1,
                   batch_weights=is_weights,
                   num_steps=1)
+            dynamics_mses.append(info["mse"])
 
           if FLAGS.train_skill_dynamics_on_policy:
             buffer.clear()
@@ -1194,15 +1196,14 @@ def main(_):
               running_logp.append(info['logp'])
               running_logp_altz.append(info['logp_altz'])
 
-          if len(episode_size_buffer) > 1:
-            train_writer.add_summary(
-                tf.compat.v1.Summary(value=[
-                    tf.compat.v1.Summary.Value(
-                        tag='episode_size',
-                        simple_value=np.mean(episode_size_buffer[:-1]))
-                ]), sample_count)
+          def tb_log(name: str, scalar):
+              tensorboard_log_scalar(name=name, scalar=scalar, tb_writer=train_writer, step_num=sample_count)
 
-            should_log_state_distribution = iter_count % 10 == 0
+          if len(episode_size_buffer) > 1:
+            tb_log(name='episode_size', scalar=np.mean(episode_size_buffer[:-1]))
+            tb_log(name='episode_return', scalar=np.mean(episode_return_buffer[:-1]))
+
+            should_log_state_distribution = False and iter_count % 10 == 0
             if should_log_state_distribution:
                 def make_hist(dim, dim_data):
                     return tf.summary.histogram(name=f"tracked-dim/{dim}", data=dim_data, step=sample_count)
@@ -1211,33 +1212,10 @@ def main(_):
                     all_histograms = [make_hist(dim, dim_data) for dim, dim_data in enumerate(input_obs.T)]
                     sess.run(all_histograms)
 
-          if len(episode_return_buffer) > 1:
-            train_writer.add_summary(
-                tf.compat.v1.Summary(value=[
-                    tf.compat.v1.Summary.Value(
-                        tag='episode_return',
-                        simple_value=np.mean(episode_return_buffer[:-1]))
-                ]), sample_count)
-          train_writer.add_summary(
-              tf.compat.v1.Summary(value=[
-                  tf.compat.v1.Summary.Value(
-                      tag='dads/reward',
-                      simple_value=np.mean(
-                          np.concatenate(running_dads_reward)))
-              ]), sample_count)
-
-          train_writer.add_summary(
-              tf.compat.v1.Summary(value=[
-                  tf.compat.v1.Summary.Value(
-                      tag='dads/logp',
-                      simple_value=np.mean(np.concatenate(running_logp)))
-              ]), sample_count)
-          train_writer.add_summary(
-              tf.compat.v1.Summary(value=[
-                  tf.compat.v1.Summary.Value(
-                      tag='dads/logp_altz',
-                      simple_value=np.mean(np.concatenate(running_logp_altz)))
-              ]), sample_count)
+          tb_log(name='dads/reward', scalar=np.mean(np.concatenate(running_dads_reward)))
+          tb_log(name='dads/logp', scalar=np.mean(np.concatenate(running_logp)))
+          tb_log(name='dads/logp_altz', scalar=np.mean(np.concatenate(running_logp_altz)))
+          tb_log(name="dads/dynamics-mse", scalar=np.mean(dynamics_mses))
 
           if FLAGS.clear_buffer_every_iter:
             raise NotImplementedError
@@ -1310,6 +1288,12 @@ def main(_):
                                     skill_provider=skill_provider)
         if record_mpc_performance:
             eval_plan_env.close()
+
+
+def tensorboard_log_scalar(tb_writer, scalar: float, name: str, step_num: int) -> None:
+    val = tf.compat.v1.Summary.Value(tag=name, simple_value=scalar)
+    summary = tf.compat.v1.Summary(value=[val])
+    tb_writer.add_summary(summary, step_num)
 
 
 class MPCSkillProvider(SkillProvider):
