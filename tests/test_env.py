@@ -28,12 +28,15 @@ def env_fn(request):
     yield request.param
 
 
-def test_env_trajectory(env_fn):
+def test_env_trajectories_dont_env(env_fn):
     env = env_fn()
     for _ in range(3):
         env.reset()
         for _ in range(10):
             env.step(env.action_space.sample())
+
+    dones = [env.step(env.action_space.sample())[2] for _ in range(150)]
+    assert len(dones) > 0 and not any(dones)
 
 
 @pytest.mark.parametrize("obs_type",
