@@ -1,27 +1,38 @@
---environment=fetch
---max_env_steps=100
+--environment=reach
+--max_env_steps=450
+--max_env_steps_eval=30
 
 --run_train=1
---num_skills=2
+--num_skills=3
 --skill_type=cont_uniform
+--random_skills=100
+--reduced_observation_size=3
 
 --save_model=dads
---vid_name=skill
+#--vid_name=skill
 
---record_freq=200
---num_epochs=1001
+--save_freq=50
+--record_freq=50
+--num_evals=0
+--per_skill_evals=1
+--num_epochs=301
 
---replay_buffer_capacity=100000
---initial_collect_steps=2000
---collect_steps=500
+--replay_buffer_capacity=10000
+--initial_collect_steps=450
+--collect_steps=450
 --resample_prob=1
---steps_before_resample=20
+--steps_before_resample=30
 
---agent_train_steps=32
---agent_batch_size=128
+--num_components=1
+--skill_dyn_train_steps=128
+--skill_dyn_batch_size=256
+--agent_train_steps=256
+--agent_batch_size=256
 --hidden_layer_size=256
 
---run_eval=0
---num_evals=10
-
---debug=1
+# Sparse-like environment
+--run_eval=1
+--refine_steps=10
+--planning_horizon=1
+--primitive_horizon=3
+--num_candidate_sequences=200
