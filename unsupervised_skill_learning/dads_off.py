@@ -31,8 +31,8 @@ from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env
     make_point2d_dads_env, make_fetch_reach_env, DADSEnv
 from lib.simple_buffer import SimpleBuffer, Transition
 from unsupervised_skill_learning.common_funcs import process_observation_given, \
-    hide_coordinates, clip, SliderSkillProvider, evaluate_skill_provider, \
-    SkillProvider
+    hide_coordinates, clip, SliderSkillProvider, evaluate_skill_provider_loop, \
+    SkillProvider, consume
 from unsupervised_skill_learning.mppi import mppi_next_skill_loop
 
 sys.path.append(os.path.abspath('./'))
@@ -816,14 +816,16 @@ class UniformResampler:
 
 
 def enter_manual_control_mode(eval_policy: py_tf_policy.PyTFPolicy):
-    return evaluate_skill_provider(
+    generator = evaluate_skill_provider_loop(
         env=get_environment(env_name=FLAGS.environment + "_goal"),
         policy=eval_policy,
         episode_length=100,
         hide_coords_fn=hide_coords,
         clip_action_fn=clip_action,
-        skill_provider=SliderSkillProvider(num_sliders=FLAGS.num_skills)
+        skill_provider=SliderSkillProvider(num_sliders=FLAGS.num_skills),
+        render_env=True
     )
+    consume(generator)
 
 
 def main(_):
@@ -1198,7 +1200,7 @@ def main(_):
               running_logp_altz.append(info['logp_altz'])
 
           def tb_log(name: str, scalar):
-              tensorboard_log_scalar(name=name, scalar=scalar, tb_writer=train_writer, step_num=sample_count)
+              tensorboard_log_scalar(name=name, scalar=scalar, tb_writer=train_writer, step_num=iter_count)
 
           if len(episode_size_buffer) > 1:
             tb_log(name='episode_size', scalar=np.mean(episode_size_buffer[:-1]))
@@ -1233,10 +1235,27 @@ def main(_):
                 dynamics=agent.skill_dynamics,
                 vid_name=FLAGS.vid_name,
                 plot_name='traj_plot')
-            gt.stamp("eval")
+
+          do_perform_mpc_eval = iter_count > 0 and iter_count % 20 == 0
+          if do_perform_mpc_eval:
+            env = get_environment(env_name=FLAGS.environment + "_goal")
+            skill_provider = MPCSkillProvider(dynamics=agent.skill_dynamics, env=env)
+            generator = evaluate_skill_provider_loop(
+                env=env,
+                policy=eval_policy,
+                episode_length=FLAGS.max_env_steps_eval,
+                hide_coords_fn=hide_coords,
+                clip_action_fn=clip_action,
+                skill_provider=skill_provider,
+                num_episodes=20)
+            tb_log("dads/mpc-rewards", np.mean([ts.reward for ts in generator]))
+          gt.stamp("eval")
 
         py_env.close()
-        print(gt.report(include_itrs=False, include_stats=False, format_options=dict(stamp_name_width=30)))
+        try:
+            print(gt.report(include_itrs=False, include_stats=False, format_options=dict(stamp_name_width=30)))
+        except ValueError:
+            pass
 
       # final evaluation, if any
       if FLAGS.run_eval:
@@ -1281,12 +1300,15 @@ def main(_):
             )
         else:
             skill_provider = MPCSkillProvider(dynamics=agent.skill_dynamics, env=eval_plan_env)
-            evaluate_skill_provider(env=eval_plan_env,
-                                    policy=eval_policy,
-                                    episode_length=FLAGS.max_env_steps_eval,
-                                    hide_coords_fn=hide_coords,
-                                    clip_action_fn=clip_action,
-                                    skill_provider=skill_provider)
+            generator = evaluate_skill_provider_loop(
+                env=eval_plan_env,
+                policy=eval_policy,
+                episode_length=FLAGS.max_env_steps_eval,
+                hide_coords_fn=hide_coords,
+                clip_action_fn=clip_action,
+                skill_provider=skill_provider,
+                render_env=True)
+            consume(generator)
         if record_mpc_performance:
             eval_plan_env.close()
 

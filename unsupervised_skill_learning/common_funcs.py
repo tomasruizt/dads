@@ -1,7 +1,9 @@
 from abc import ABC
+from collections import deque
 from typing import Callable
-
+import matplotlib.pyplot as plt
 import numpy as np
+import sys
 import tensorflow as tf
 from tf_agents.trajectories.time_step import TimeStep
 
@@ -149,24 +151,28 @@ class SliderSkillProvider(SkillProvider):
         return self._slider.get_slider_values()
 
 
-def evaluate_skill_provider(
+def evaluate_skill_provider_loop(
         env,
         policy: py_tf_policy.PyTFPolicy,
         episode_length: int,
         hide_coords_fn: Callable,
         clip_action_fn: Callable,
-        skill_provider):
+        skill_provider,
+        num_episodes=sys.maxsize,
+        render_env=False):
     check_reward_fn(env)
 
-    while True:
+    for _ in range(num_episodes):
         timestep = env.reset()
         skill_provider.start_episode()
         for _ in range(episode_length):
             skill = skill_provider.get_skill(timestep)
-            timestep = timestep._replace(observation=np.concatenate((timestep.observation, skill)))
+            timestep: TimeStep = timestep._replace(observation=np.concatenate((timestep.observation, skill)))
             action = clip_action_fn(policy.action_mean(hide_coords_fn(timestep)))
             timestep = env.step(action)
-            env.render("human")
+            yield timestep
+            if render_env:
+                env.render("human")
 
 
 def check_reward_fn(env: DADSEnv):
@@ -177,3 +183,40 @@ def check_reward_fn(env: DADSEnv):
     to_goal = env.achieved_goal_from_state
     reward_classic = env.compute_reward(to_goal(obs1), to_goal(obs2), info=None)
     assert not np.isclose(reward_dads, reward_classic), f"Both rewards are equal to: {reward_dads}"
+
+
+def consume(iterator):
+    deque(iterator, maxlen=0)
+
+
+class PlanViz:
+    def __init__(self):
+        self._inited = False
+
+    def _initialize(self):
+        plt.ion()
+        self._fig, self._ax = plt.subplots()
+        self._cur_pos_scatter = self._ax.scatter(0, 0, c="orange")
+        self._goal_scatter = self._ax.scatter(0, 0, c="red")
+        self._highlight_pt_scatter = self._ax.scatter(0, 0, c="pink")
+        self._pts_scatter = self._ax.scatter([None], [None], c=[0], cmap="viridis")
+        self._direction = self._ax.quiver([0, 0], [1, 1])
+        self._inited = True
+
+    def update(self, cur_pos: np.ndarray, goal: np.ndarray, highlight_pt: np.ndarray,
+               pts: np.ndarray, rewards: np.ndarray) -> None:
+        if not self._inited:
+            self._initialize()
+        self._direction.remove()
+        self._direction = self._ax.quiver(*cur_pos, *(highlight_pt - cur_pos), zorder=-1)
+        self._pts_scatter.remove()
+        self._pts_scatter = self._ax.scatter(*pts.T, c=rewards, cmap="viridis", zorder=-1)
+        self._cur_pos_scatter.set_offsets(cur_pos)
+        self._goal_scatter.set_offsets(goal)
+        self._highlight_pt_scatter.set_offsets(highlight_pt)
+        self._ax.set_xlim(np.asarray([-0.2, 0.2]) + 1.3)
+        self._ax.set_ylim(np.asarray([-0.4, 0.4]) + 0.75)
+
+        self._fig.tight_layout()
+        self._fig.canvas.draw()
+        self._fig.canvas.flush_events()
