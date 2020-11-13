@@ -102,6 +102,9 @@ class DADSCustomFetchReachEnv(FetchReachEnv):
     def achieved_goal_from_state(state: np.ndarray) -> np.ndarray:
         return state[..., :3] if _is_batch(state) else state[:3]
 
+    def _sample_goal(self):
+        return np.random.uniform(low=[1.1, 0.4, 0.4], high=[1.5, 1.1, 0.9])
+
 
 class DADSEnv(ABC, GoalEnv):
     goal: np.ndarray
