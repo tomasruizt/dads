@@ -1,6 +1,6 @@
 from abc import ABC
 from collections import deque
-from typing import Callable
+from typing import Callable, NamedTuple, Iterator
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
@@ -151,6 +151,12 @@ class SliderSkillProvider(SkillProvider):
         return self._slider.get_slider_values()
 
 
+class DADSStep(NamedTuple):
+    ts: TimeStep
+    skill: np.ndarray
+    ts_p1: TimeStep
+
+
 def evaluate_skill_provider_loop(
         env,
         policy: py_tf_policy.PyTFPolicy,
@@ -159,7 +165,7 @@ def evaluate_skill_provider_loop(
         clip_action_fn: Callable,
         skill_provider,
         num_episodes=sys.maxsize,
-        render_env=False):
+        render_env=False) -> Iterator[DADSStep]:
     check_reward_fn(env)
 
     for _ in range(num_episodes):
@@ -167,10 +173,11 @@ def evaluate_skill_provider_loop(
         skill_provider.start_episode()
         for _ in range(episode_length):
             skill = skill_provider.get_skill(timestep)
-            timestep: TimeStep = timestep._replace(observation=np.concatenate((timestep.observation, skill)))
-            action = clip_action_fn(policy.action_mean(hide_coords_fn(timestep)))
-            timestep = env.step(action)
-            yield timestep
+            timestep_pskill: TimeStep = timestep._replace(observation=np.concatenate((timestep.observation, skill)))
+            action = clip_action_fn(policy.action_mean(hide_coords_fn(timestep_pskill)))
+            next_timestep = env.step(action)
+            yield DADSStep(ts=timestep, skill=skill, ts_p1=next_timestep)
+            timestep = next_timestep
             if render_env:
                 env.render("human")
 

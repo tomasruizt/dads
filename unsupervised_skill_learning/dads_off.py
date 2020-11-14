@@ -18,7 +18,7 @@ from __future__ import print_function
 
 import os
 import io
-from typing import List, Generator
+from typing import List, Generator, Sequence
 import gtimer as gt
 from absl import flags, logging
 
@@ -26,11 +26,13 @@ import sys
 
 from tf_agents.trajectories.time_step import TimeStep
 
+from common_funcs import DADSStep
 from custom_mppi import MPPISkillProvider
 from density_estimation import DensityEstimator
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
     make_point2d_dads_env, make_fetch_reach_env, DADSEnv
 from lib.simple_buffer import SimpleBuffer, Transition
+from skill_dynamics import SkillDynamics, mse
 from unsupervised_skill_learning.common_funcs import process_observation_given, \
     hide_coordinates, clip, SliderSkillProvider, evaluate_skill_provider_loop, \
     SkillProvider, consume
@@ -829,6 +831,16 @@ def enter_manual_control_mode(eval_policy: py_tf_policy.PyTFPolicy):
     consume(generator)
 
 
+def calc_dynamics_mses(env: DADSEnv, dynamics: SkillDynamics, dads_steps: Sequence[DADSStep]) -> float:
+    cur_obs = np.asarray([s.ts.observation for s in dads_steps])
+    skills = np.asarray([s.skill for s in dads_steps])
+
+    next_dyn_obs = env.to_dynamics_obs(np.asarray([s.ts_p1.observation for s in dads_steps]))
+    pred_next_obs = dynamics.predict_state(timesteps=env.to_dynamics_obs(cur_obs), actions=skills)
+
+    return mse(next_dyn_obs, pred_next_obs)
+
+
 def main(_):
   # setting up
   tf.compat.v1.enable_resource_variables()
@@ -1237,10 +1249,10 @@ def main(_):
                 vid_name=FLAGS.vid_name,
                 plot_name='traj_plot')
 
-          do_perform_mpc_eval = False and iter_count > 0 and iter_count % 20 == 0
+          do_perform_mpc_eval = iter_count > 0 and iter_count % 5 == 0
           if do_perform_mpc_eval:
             env = get_environment(env_name=FLAGS.environment + "_goal")
-            skill_provider = MPCSkillProvider(dynamics=agent.skill_dynamics, env=env)
+            skill_provider = MPPISkillProvider(env=env, dynamics=agent.skill_dynamics, skills_to_plan=FLAGS.planning_horizon)
             generator = evaluate_skill_provider_loop(
                 env=env,
                 policy=eval_policy,
@@ -1249,7 +1261,10 @@ def main(_):
                 clip_action_fn=clip_action,
                 skill_provider=skill_provider,
                 num_episodes=20)
-            tb_log("dads/mpc-rewards", np.mean([ts.reward for ts in generator]))
+            steps = list(generator)
+            dyn_mses = calc_dynamics_mses(dynamics=agent.skill_dynamics, dads_steps=steps, env=env)
+            tb_log("DADS-MPC/dynamics-mse", dyn_mses)
+            tb_log("DADS-MPC/rewards", np.mean([s.ts_p1.reward for s in steps]))
           gt.stamp("eval")
 
         py_env.close()
