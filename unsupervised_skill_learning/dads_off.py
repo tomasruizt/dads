@@ -26,13 +26,13 @@ import sys
 
 from tf_agents.trajectories.time_step import TimeStep
 
-from common_funcs import DADSStep
+from common_funcs import DADSStep, grouper
 from custom_mppi import MPPISkillProvider
 from density_estimation import DensityEstimator
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
     make_point2d_dads_env, make_fetch_reach_env, DADSEnv
 from lib.simple_buffer import SimpleBuffer, Transition
-from skill_dynamics import SkillDynamics, mse
+from skill_dynamics import SkillDynamics, l2
 from unsupervised_skill_learning.common_funcs import process_observation_given, \
     hide_coordinates, clip, SliderSkillProvider, evaluate_skill_provider_loop, \
     SkillProvider, consume
@@ -831,14 +831,19 @@ def enter_manual_control_mode(eval_policy: py_tf_policy.PyTFPolicy):
     consume(generator)
 
 
-def calc_dynamics_mses(env: DADSEnv, dynamics: SkillDynamics, dads_steps: Sequence[DADSStep]) -> float:
+def calc_dynamics_l2(env: DADSEnv, dynamics: SkillDynamics, dads_steps: Sequence[DADSStep]) -> float:
     cur_obs = np.asarray([s.ts.observation for s in dads_steps])
     skills = np.asarray([s.skill for s in dads_steps])
 
     next_dyn_obs = env.to_dynamics_obs(np.asarray([s.ts_p1.observation for s in dads_steps]))
     pred_next_obs = dynamics.predict_state(timesteps=env.to_dynamics_obs(cur_obs), actions=skills)
 
-    return mse(next_dyn_obs, pred_next_obs)
+    return l2(next_dyn_obs, pred_next_obs)
+
+def calc_goal_l2(env: DADSEnv, steps: Sequence[DADSStep]) -> float:
+    desired_goals = np.asarray([s.goal for s in steps])
+    achieved_goals = env.achieved_goal_from_state(np.asarray([s.ts_p1.observation for s in steps]))
+    return l2(achieved_goals, desired_goals)
 
 
 def main(_):
@@ -1137,7 +1142,7 @@ def main(_):
               trajectories_list = [get_batch() for _ in range(FLAGS.skill_dyn_train_steps)]
               gt.stamp("[dyn]sample")
 
-          dynamics_mses = []
+          dynamics_l2_error = []
           # TODO(architsh): clear_buffer_every_iter needs to fix these as well
           for trajectory_sample in trajectories_list:
             # is_weights is None usually, unless relabelling involves importance_sampling
@@ -1167,7 +1172,7 @@ def main(_):
                   batch_size=-1,
                   batch_weights=is_weights,
                   num_steps=1)
-            dynamics_mses.append(info["mse"])
+            dynamics_l2_error.append(info["l2-error"])
 
           if FLAGS.train_skill_dynamics_on_policy:
             buffer.clear()
@@ -1231,7 +1236,7 @@ def main(_):
           tb_log(name='dads/reward', scalar=np.mean(np.concatenate(running_dads_reward)))
           tb_log(name='dads/logp', scalar=np.mean(np.concatenate(running_logp)))
           tb_log(name='dads/logp_altz', scalar=np.mean(np.concatenate(running_logp_altz)))
-          tb_log(name="dads/dynamics-mse", scalar=np.mean(dynamics_mses))
+          tb_log(name="dads/dynamics-l2-error", scalar=np.mean(dynamics_l2_error))
 
           if FLAGS.clear_buffer_every_iter:
             raise NotImplementedError
@@ -1262,8 +1267,9 @@ def main(_):
                 skill_provider=skill_provider,
                 num_episodes=20)
             steps = list(generator)
-            dyn_mses = calc_dynamics_mses(dynamics=agent.skill_dynamics, dads_steps=steps, env=env)
-            tb_log("DADS-MPC/dynamics-mse", dyn_mses)
+            dyn_l2_error = calc_dynamics_l2(dynamics=agent.skill_dynamics, dads_steps=steps, env=env)
+            tb_log("DADS-MPC/dynamics-l2-error", dyn_l2_error)
+            tb_log("DADS-MPC/goal-l2-error", calc_goal_l2(env=env, steps=steps))
             tb_log("DADS-MPC/rewards", np.mean([s.ts_p1.reward for s in steps]))
           gt.stamp("eval")
 
@@ -1325,7 +1331,12 @@ def main(_):
                 clip_action_fn=clip_action,
                 skill_provider=skill_provider,
                 render_env=True)
-            consume(generator)
+            for steps in grouper(n=FLAGS.max_env_steps_eval, iterable=generator):
+                dyn_l2_dist = calc_dynamics_l2(env=env, dynamics=agent.skill_dynamics, dads_steps=steps)
+                print(f"Dynamics l2 error: {dyn_l2_dist:.3f}")
+                goal_l2_dist = calc_goal_l2(env=env, steps=steps)
+                print(f"Goal l2 error: {goal_l2_dist:.3f}")
+
         if record_mpc_performance:
             eval_plan_env.close()
 

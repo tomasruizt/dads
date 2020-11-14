@@ -391,7 +391,7 @@ class SkillDynamics:
         self._session.run(run_op, feed_dict)
 
     next_timesteps_pred = self.predict_state(timesteps=timesteps, actions=actions)
-    return dict(mse=mse(next_timesteps_pred, timesteps))
+    return {"l2-error": l2(next_timesteps_pred, timesteps)}
 
   def get_log_prob(self, timesteps, actions, next_timesteps):
     if not self._use_placeholders:
@@ -429,5 +429,9 @@ class SkillDynamics:
     return pred_state
 
 
-def mse(x1, x2):
-    return np.mean(np.subtract(x1, x2)**2)
+def l2(x1: np.ndarray, x2: np.ndarray):
+    assert x1.ndim <= 2
+    is_batch = x1.ndim == 2
+    if is_batch:
+        return np.linalg.norm(np.subtract(x1, x2), axis=1).mean()
+    return np.linalg.norm(np.subtract(x1, x2))

@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import sys
 import tensorflow as tf
+from itertools import islice
 from tf_agents.trajectories.time_step import TimeStep
 
 from envs.custom_envs import DADSEnv
@@ -155,6 +156,7 @@ class DADSStep(NamedTuple):
     ts: TimeStep
     skill: np.ndarray
     ts_p1: TimeStep
+    goal: np.ndarray
 
 
 def evaluate_skill_provider_loop(
@@ -176,7 +178,7 @@ def evaluate_skill_provider_loop(
             timestep_pskill: TimeStep = timestep._replace(observation=np.concatenate((timestep.observation, skill)))
             action = clip_action_fn(policy.action_mean(hide_coords_fn(timestep_pskill)))
             next_timestep = env.step(action)
-            yield DADSStep(ts=timestep, skill=skill, ts_p1=next_timestep)
+            yield DADSStep(ts=timestep, skill=skill, ts_p1=next_timestep, goal=env.goal.copy())
             timestep = next_timestep
             if render_env:
                 env.render("human")
@@ -240,3 +242,12 @@ class PlanViz:
         self._fig.tight_layout()
         self._fig.canvas.draw()
         self._fig.canvas.flush_events()
+
+
+def grouper(n, iterable):
+    """
+    >>> list(grouper(3, 'ABCDEFG'))
+    [['A', 'B', 'C'], ['D', 'E', 'F'], ['G']]
+    """
+    iterable = iter(iterable)
+    return iter(lambda: list(islice(iterable, n)), [])
