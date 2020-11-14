@@ -26,6 +26,7 @@ import sys
 
 from tf_agents.trajectories.time_step import TimeStep
 
+from custom_mppi import MPPISkillProvider
 from density_estimation import DensityEstimator
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
     make_point2d_dads_env, make_fetch_reach_env, DADSEnv
@@ -1236,7 +1237,7 @@ def main(_):
                 vid_name=FLAGS.vid_name,
                 plot_name='traj_plot')
 
-          do_perform_mpc_eval = iter_count > 0 and iter_count % 20 == 0
+          do_perform_mpc_eval = False and iter_count > 0 and iter_count % 20 == 0
           if do_perform_mpc_eval:
             env = get_environment(env_name=FLAGS.environment + "_goal")
             skill_provider = MPCSkillProvider(dynamics=agent.skill_dynamics, env=env)
@@ -1299,7 +1300,8 @@ def main(_):
                 primitive_horizon=FLAGS.primitive_horizon
             )
         else:
-            skill_provider = MPCSkillProvider(dynamics=agent.skill_dynamics, env=eval_plan_env)
+            skill_provider = MPPISkillProvider(env=eval_plan_env, dynamics=agent.skill_dynamics,
+                                               skills_to_plan=FLAGS.planning_horizon)
             generator = evaluate_skill_provider_loop(
                 env=eval_plan_env,
                 policy=eval_policy,
