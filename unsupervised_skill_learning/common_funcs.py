@@ -195,27 +195,40 @@ class PlanViz:
 
     def _initialize(self):
         plt.ion()
-        self._fig, self._ax = plt.subplots()
+        self._fig, (self._ax, self._skills_ax) = plt.subplots(2, 1)
         self._cur_pos_scatter = self._ax.scatter(0, 0, c="orange")
+        self._prev_pos_scatter = self._ax.scatter(0, 0, c="brown")
         self._goal_scatter = self._ax.scatter(0, 0, c="red")
         self._highlight_pt_scatter = self._ax.scatter(0, 0, c="pink")
         self._pts_scatter = self._ax.scatter([None], [None], c=[0], cmap="viridis")
         self._direction = self._ax.quiver([0, 0], [1, 1])
+
+        self._skills_scatter = self._skills_ax.scatter([None], [None], c=[0], cmap="viridis")
+        self._sel_skill_scatter = self._skills_ax.scatter(0, 0, c="pink")
+        self._skills_ax.set_xlim((-1, 1))
+        self._skills_ax.set_ylim((-1, 1))
+
         self._inited = True
 
-    def update(self, cur_pos: np.ndarray, goal: np.ndarray, highlight_pt: np.ndarray,
-               pts: np.ndarray, rewards: np.ndarray) -> None:
+    def update(self, prev_pos: np.ndarray, cur_pos: np.ndarray, goal: np.ndarray,
+               highlight_pt: np.ndarray, pts: np.ndarray, rewards: np.ndarray,
+               candidate_skills: np.ndarray, selected_skill: np.ndarray) -> None:
         if not self._inited:
             self._initialize()
         self._direction.remove()
-        self._direction = self._ax.quiver(*cur_pos, *(highlight_pt - cur_pos), zorder=-1)
+        self._direction = self._ax.quiver(*cur_pos, *(highlight_pt - cur_pos), angles="xy", zorder=-1)
         self._pts_scatter.remove()
         self._pts_scatter = self._ax.scatter(*pts.T, c=rewards, cmap="viridis", zorder=-1)
         self._cur_pos_scatter.set_offsets(cur_pos)
+        self._prev_pos_scatter.set_offsets(prev_pos)
         self._goal_scatter.set_offsets(goal)
         self._highlight_pt_scatter.set_offsets(highlight_pt)
-        self._ax.set_xlim(np.asarray([-0.2, 0.2]) + 1.3)
+        self._ax.set_xlim(np.asarray([-0.25, 0.25]) + 1.3)
         self._ax.set_ylim(np.asarray([-0.4, 0.4]) + 0.75)
+
+        self._skills_scatter.remove()
+        self._skills_scatter = self._skills_ax.scatter(*candidate_skills[..., :2].T, c=rewards, cmap="viridis")
+        self._sel_skill_scatter.set_offsets(selected_skill[:2])
 
         self._fig.tight_layout()
         self._fig.canvas.draw()
