@@ -17,3 +17,6 @@ dads.iml
 results/
 density-model-ckpt/
 logs/
+her-results/
+debug_reach.py
+run_*.sh
