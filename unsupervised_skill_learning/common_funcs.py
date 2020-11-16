@@ -168,7 +168,6 @@ def evaluate_skill_provider_loop(
         skill_provider,
         num_episodes=sys.maxsize,
         render_env=False) -> Iterator[DADSStep]:
-    check_reward_fn(env)
 
     for _ in range(num_episodes):
         timestep = env.reset()

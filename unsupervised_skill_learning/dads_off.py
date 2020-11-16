@@ -26,7 +26,7 @@ import sys
 
 from tf_agents.trajectories.time_step import TimeStep
 
-from common_funcs import DADSStep, grouper
+from common_funcs import DADSStep, grouper, check_reward_fn
 from custom_mppi import MPPISkillProvider
 from density_estimation import DensityEstimator
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
@@ -82,6 +82,7 @@ nest = tf.nest
 
 # general hyperparameters
 flags.DEFINE_string('logdir', '~/tmp/dads', 'Directory for saving experiment data')
+flags.DEFINE_string('experiment_name', default='', help="Optional experiment name to postfix the logdir")
 flags.DEFINE_integer("seed", 0, "Seed of this experiment")
 
 # environment hyperparameters
@@ -109,7 +110,7 @@ flags.DEFINE_integer('record_freq', 100,
                      'Video recording frequency within the training loop')
 
 # final evaluation after training is done
-flags.DEFINE_integer('run_eval', 0, 'Evaluate learnt skills')
+flags.DEFINE_integer('run_final_eval', 0, 'Evaluate learnt skills')
 
 # evaluation type
 flags.DEFINE_integer('num_evals', 0, 'Number of skills to evaluate')
@@ -856,7 +857,8 @@ def main(_):
   root_dir = os.path.abspath(os.path.expanduser(FLAGS.logdir))
   if not tf.io.gfile.exists(root_dir):
     tf.io.gfile.makedirs(root_dir)
-  log_dir = os.path.join(root_dir, FLAGS.environment, f"seed-{FLAGS.seed}")
+  experiment_name = f"{FLAGS.experiment_name}-" if FLAGS.experiment_name is not "" else ""
+  log_dir = os.path.join(root_dir, FLAGS.environment, f"{experiment_name}seed-{FLAGS.seed}")
   
   if not tf.io.gfile.exists(log_dir):
     tf.io.gfile.makedirs(log_dir)
@@ -886,6 +888,7 @@ def main(_):
   with tf.compat.v2.summary.record_if(True):
     # environment related stuff
     py_env = get_environment(env_name=FLAGS.environment)
+    check_reward_fn(env=py_env)
     py_env = wrap_env(
         skill_wrapper.SkillWrapper(
             py_env,
@@ -1254,7 +1257,7 @@ def main(_):
                 vid_name=FLAGS.vid_name,
                 plot_name='traj_plot')
 
-          do_perform_mpc_eval = iter_count > 0 and iter_count % 5 == 0
+          do_perform_mpc_eval = iter_count > 0 and iter_count % 2 == 0
           if do_perform_mpc_eval:
             env = get_environment(env_name=FLAGS.environment + "_goal")
             skill_provider = MPPISkillProvider(env=env, dynamics=agent.skill_dynamics, skills_to_plan=FLAGS.planning_horizon)
@@ -1280,7 +1283,7 @@ def main(_):
             pass
 
       # final evaluation, if any
-      if FLAGS.run_eval:
+      if FLAGS.run_final_eval:
         vid_dir = os.path.join(log_dir, 'videos', 'final_eval')
         if not tf.io.gfile.exists(vid_dir):
           tf.io.gfile.makedirs(vid_dir)
