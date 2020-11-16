@@ -3,7 +3,7 @@ import pytest
 import numpy as np
 
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
-    FixedGoalFetchPickAndPlaceEnv, FixedGoalFetchSlideEnv, make_point2d_dads_env, \
+    CustomFetchPickAndPlaceEnv, FixedGoalFetchSlideEnv, make_point2d_dads_env, \
     DADSCustomFetchReachEnv, make_fetch_reach_env, make_toylab_dads_env, DADSEnv
 
 convex_envs_fns = [
@@ -19,7 +19,7 @@ envs_fns = [
 ]
 
 fetch_env_ctors = [
-    FixedGoalFetchPickAndPlaceEnv,
+    CustomFetchPickAndPlaceEnv,
     FixedGoalFetchSlideEnv,
     DADSCustomFetchReachEnv
 ]

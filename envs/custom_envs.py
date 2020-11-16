@@ -58,7 +58,7 @@ def make_point2d_dads_env():
 
 
 def make_fetch_pick_and_place_env():
-    return _process_fetch_env(FixedGoalFetchPickAndPlaceEnv(reward_type="dense"))
+    return _process_fetch_env(CustomFetchPickAndPlaceEnv(reward_type="dense"))
 
 
 def make_fetch_slide_env():
@@ -79,13 +79,8 @@ def _get_goal_from_state_fetch(state: np.ndarray) -> np.ndarray:
     return state[..., 3:6] if _is_batch(state) else state[3:6]
 
 
-class FixedGoalFetchPickAndPlaceEnv(FetchPickAndPlaceEnv):
-    _fixed_goal = np.asarray([1.34803644, 0.71081931, 0.6831472])
-
+class CustomFetchPickAndPlaceEnv(FetchPickAndPlaceEnv):
     achieved_goal_from_state = staticmethod(_get_goal_from_state_fetch)
-
-    def _sample_goal(self):
-        return self._fixed_goal.copy()
 
 
 class FixedGoalFetchSlideEnv(FetchSlideEnv):
@@ -103,7 +98,7 @@ class DADSCustomFetchReachEnv(FetchReachEnv):
         return state[..., :3] if _is_batch(state) else state[:3]
 
     def _sample_goal(self):
-        return np.random.uniform(low=[1.1, 0.4, 0.4], high=[1.5, 1.1, 0.9])
+        return np.random.uniform(low=[1.1, 0.4, 0.4], high=[1.45, 1.1, 0.8])
 
 
 class DADSEnv(ABC, GoalEnv):
