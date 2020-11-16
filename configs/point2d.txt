@@ -1,5 +1,5 @@
 --environment=point2d
---max_env_steps=300
+--max_env_steps=100
 --max_env_steps_eval=20
 
 --run_train=1
@@ -11,15 +11,16 @@
 
 --save_freq=25
 --record_freq=25
---num_evals=5
+--num_evals=0
 --per_skill_evals=10
---num_epochs=201
+--num_epochs=101
 
---replay_buffer_capacity=10000
---initial_collect_steps=300
---collect_steps=300
+--replay_buffer_capacity=2000
+--initial_collect_steps=1000
+--collect_steps=1000
 --resample_prob=1
---steps_before_resample=20
+--steps_before_resample=25
+--experiment_name=2000buffer-1000iter-100eplen-25resample
 
 --skill_dyn_train_steps=64
 --skill_dyn_batch_size=256
@@ -31,8 +32,8 @@
 --num_components=1
 
 # MPPI
---run_eval=1
+--run_final_eval=0
 --refine_steps=10
 --planning_horizon=1
---primitive_horizon=2
+--primitive_horizon=1
 --num_candidate_sequences=100
