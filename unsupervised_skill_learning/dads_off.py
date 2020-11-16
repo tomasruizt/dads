@@ -781,27 +781,27 @@ def clip_action(action):
 
 
 class UniformResampler:
-    def __init__(self, state_dim: int, buffer: SimpleBuffer, tf_graph: tf.Graph):
+    def __init__(self, env: DADSEnv, buffer: SimpleBuffer, tf_graph: tf.Graph):
         self._buffer = buffer
+        self._env = env
         with tf_graph.as_default():
             self._estimator = DensityEstimator(
-                input_dim=state_dim,
+                input_dim=env.dyn_obs_dim(),
                 vae_training_batch_size=FLAGS.agent_batch_size,
-                samples_generator=lambda n: self._get_state_deltas(buffer.sample(n=n))
+                samples_generator=lambda n: self._get_dyn_obs_deltas(buffer.sample(n=n))
             )
         self.tf_session = None
 
-    @staticmethod
-    def _get_state_deltas(trajectory: Trajectory) -> np.ndarray:
-        state = trajectory.observation[:, 0, :-FLAGS.num_skills]
-        next_state = trajectory.observation[:, 1, :-FLAGS.num_skills]
-        return next_state - state
+    def _get_dyn_obs_deltas(self, trajectory: Trajectory) -> np.ndarray:
+        dyn_obs = self._env.to_dynamics_obs(trajectory.observation[:, 0, :-FLAGS.num_skills])
+        next_dyn_obs = self._env.to_dynamics_obs(trajectory.observation[:, 1, :-FLAGS.num_skills])
+        return next_dyn_obs - dyn_obs
 
     def resample(self, num_batches: int, batch_size: int,
                  from_trajectory: Trajectory = None) -> List[Trajectory]:
         if from_trajectory is None:
             from_trajectory = self._buffer.sample(num_batches*batch_size)
-        deltas = self._get_state_deltas(from_trajectory)
+        deltas = self._get_dyn_obs_deltas(from_trajectory)
 
         probs = self.tf_session.run(self._estimator.get_input_density(x=deltas))
         importance_sampling_weights = 1 / probs.astype(np.float64)
@@ -811,7 +811,7 @@ class UniformResampler:
         return [self.filter_trajectory(from_trajectory, indices) for indices in all_indices]
 
     def train_density(self) -> None:
-        deltas = self._get_state_deltas(self._buffer.sample(256 * 20))
+        deltas = self._get_dyn_obs_deltas(self._buffer.sample(256 * 20))
         self._estimator.VAE.fit(x=deltas, y=deltas, verbose=0, batch_size=256)
 
     @staticmethod
@@ -1000,12 +1000,9 @@ def main(_):
               array_spec.ArraySpec(
                   shape=(), dtype=np.float32, name='action_log_prob')))
 
-    trajectory_spec = from_transition(py_env_time_step_spec, policy_step_spec,
-                                      py_env_time_step_spec)
     buffer = SimpleBuffer(capacity=FLAGS.replay_buffer_capacity)
 
-    state_dim = trajectory_spec.observation.shape[0] - FLAGS.num_skills
-    uniform_resampler = UniformResampler(state_dim=state_dim, buffer=buffer, tf_graph=agent._graph)
+    uniform_resampler = UniformResampler(env=py_env, buffer=buffer, tf_graph=agent._graph)
 
     # insert experience manually with relabelled rewards and skills
     agent.build_agent_graph()

@@ -17,9 +17,9 @@ from envs.point2d_env import Point2DEnv
 def make_toylab_dads_env():
     env = DADSCustomToyLabEnv()
     env = ObsAsOrderedDict(env)
-    env = DADSWrapper(env)
     env = FilterObservation(env, filter_keys=["achieved_goal"])
-    return FlattenObservation(env)
+    env = FlattenObservation(env)
+    return DADSWrapper(env)
 
 
 class DADSCustomToyLabEnv(ToyLab):
@@ -70,9 +70,9 @@ def make_fetch_reach_env():
 
 
 def _process_fetch_env(env: FetchEnv):
-    env = DADSWrapper(env)
     env = FilterObservation(env, filter_keys=["observation"])
-    return FlattenObservation(env)
+    env = FlattenObservation(env)
+    return DADSWrapper(env)
 
 
 def _get_goal_from_state_fetch(state: np.ndarray) -> np.ndarray:
@@ -103,6 +103,9 @@ class DADSCustomFetchReachEnv(FetchReachEnv):
 
 class DADSEnv(ABC, GoalEnv):
     goal: np.ndarray
+
+    def dyn_obs_dim(self) -> int:
+        raise NotImplementedError
 
     class OBS_TYPE(Enum):
         DYNAMICS_OBS = "DYNAMICS_OBS"
@@ -138,3 +141,6 @@ class DADSWrapper(Wrapper, DADSEnv):
 
     def achieved_goal_from_state(self, state: np.ndarray) -> np.ndarray:
         return self.env.achieved_goal_from_state(state=state)
+
+    def dyn_obs_dim(self):
+        return len(self.to_dynamics_obs(self.env.observation_space.sample()))

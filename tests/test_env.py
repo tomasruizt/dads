@@ -106,9 +106,11 @@ def _new_winning_obs(env, obs_type: DADSEnv.OBS_TYPE):
 
 
 def test_to_dynamics_obs_fn(env_fn):
-    env = env_fn()
+    env: DADSEnv = env_fn()
     obs = env.observation_space.sample()
-    assert np.allclose(env.to_dynamics_obs(obs), env.achieved_goal_from_state(obs))
+    dynamics_obs = env.to_dynamics_obs(obs)
+    assert np.allclose(dynamics_obs, env.achieved_goal_from_state(obs))
+    assert len(dynamics_obs) == env.dyn_obs_dim()
 
 
 @pytest.mark.parametrize("env_ctor", fetch_env_ctors)
