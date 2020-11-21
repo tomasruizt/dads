@@ -12,12 +12,11 @@ class MPPISkillProvider(SkillProvider):
     def __init__(self, env: DADSEnv, dynamics: SkillDynamics, skills_to_plan: int):
         self._env = env
         self._dynamics = dynamics
-        dyn_obs_dim = len(env.to_dynamics_obs(env.observation_space.sample()))
         action_dim = dynamics._action_size
         self._device = "cpu"
         self._planner = MPPI(dynamics=self._dynamics_fn,
                              running_cost=self._cost_fn,
-                             nx=dyn_obs_dim,
+                             nx=env.dyn_obs_dim(),
                              u_min=-torch.ones(action_dim), u_max=torch.ones(action_dim),
                              noise_sigma=0.1*torch.eye(action_dim), device=self._device, horizon=skills_to_plan, lambda_=1e-6)
 

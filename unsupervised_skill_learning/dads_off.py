@@ -92,6 +92,8 @@ flags.DEFINE_integer('max_env_steps', 200,
 flags.DEFINE_integer('max_env_steps_eval', 200, 'Steps per episode when evaluating')
 flags.DEFINE_integer('reduced_observation_size', 0,
                      'Predict dynamics in a reduced observation space')
+flags.DEFINE_boolean('use_state_space_reduction', True,
+                     "Reduce the state space to the goal space in the mutual information objective")
 flags.DEFINE_integer(
     'min_steps_before_resample', 50,
     'Minimum number of steps to execute before resampling skill')
@@ -282,7 +284,7 @@ def get_env_without_postprocess(env_name: str):
 
   simple_name = env_name.replace("_goal", "")
   if simple_name in custom_envs_ctors:
-      env = custom_envs_ctors[simple_name]()
+      env = custom_envs_ctors[simple_name](use_state_space_reduction=FLAGS.use_state_space_reduction)
       if env_name.endswith("_goal"):
           return wrap_env(env, max_episode_steps=FLAGS.max_env_steps)
   elif env_name == 'Ant-v1':
@@ -848,6 +850,8 @@ def calc_goal_l2(env: DADSEnv, steps: Sequence[DADSStep]) -> float:
 
 
 def main(_):
+  logging.info(f"########### USE RESAMPLING SCHEME: {FLAGS.use_dynamics_uniform_resampling}")
+  logging.info(f"########### USE STATE SPACE REDUCTION: {FLAGS.use_state_space_reduction}")
   # setting up
   tf.compat.v1.enable_resource_variables()
   tf.compat.v1.disable_eager_execution()
@@ -916,11 +920,6 @@ def main(_):
     py_agent_time_step_spec = ts.time_step_spec(agent_obs_spec)  # policy, critic time_step spec
     tf_agent_time_step_spec = tensor_spec.from_spec(py_agent_time_step_spec)
 
-    if not FLAGS.reduced_observation_size:
-      skill_dynamics_observation_size = (py_env_time_step_spec.observation.shape[0] - FLAGS.num_skills)
-    else:
-      skill_dynamics_observation_size = FLAGS.reduced_observation_size
-
     # TODO(architsh): Shift co-ordinate hiding to actor_net and critic_net (good for futher image based processing as well)
     actor_net = actor_distribution_network.ActorDistributionNetwork(
         tf_agent_time_step_spec.observation,
@@ -942,7 +941,7 @@ def main(_):
     agent = dads_agent.DADSAgent(
         # DADS parameters
         save_dir,
-        skill_dynamics_observation_size,
+        skill_dynamics_observation_size=py_env.dyn_obs_dim(),
         observation_modify_fn=py_env.to_dynamics_obs,
         restrict_input_size=observation_omit_size,
         latent_size=FLAGS.num_skills,
