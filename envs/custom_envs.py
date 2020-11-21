@@ -140,7 +140,8 @@ class DADSWrapper(Wrapper, DADSEnv):
     def _dads_reward(self, cur_obs, next_obs, obs_type: DADSEnv.OBS_TYPE):
         achieved_goal, next_achieved_goal = cur_obs, next_obs
 
-        need_reduction = obs_type == DADSEnv.OBS_TYPE.FULL_OBS
+        need_reduction = (obs_type == DADSEnv.OBS_TYPE.FULL_OBS
+                          or obs_type == DADSEnv.OBS_TYPE.DYNAMICS_OBS and not self._use_state_space_reduction)
         if need_reduction:
             achieved_goal = self.env.achieved_goal_from_state(cur_obs)
             next_achieved_goal = self.env.achieved_goal_from_state(next_obs)

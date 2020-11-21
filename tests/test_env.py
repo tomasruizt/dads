@@ -60,10 +60,13 @@ def _closer(x_from, x_to):
     return 0.5 * (x_from + x_to)
 
 
-@pytest.mark.parametrize("obs_type",
-                         [DADSEnv.OBS_TYPE.FULL_OBS, DADSEnv.OBS_TYPE.DYNAMICS_OBS])
-def test_env_dads_reward_fn(env_fn, obs_type):
-    env: DADSEnv = env_fn()
+OBS_TYPES = [DADSEnv.OBS_TYPE.FULL_OBS, DADSEnv.OBS_TYPE.DYNAMICS_OBS]
+BOOLS = [True, False]
+
+
+@pytest.mark.parametrize("obs_type,use_state_space_reduction", zip(OBS_TYPES, BOOLS))
+def test_env_dads_reward_fn(env_fn, obs_type, use_state_space_reduction):
+    env: DADSEnv = env_fn(use_state_space_reduction=use_state_space_reduction)
     env.observation_space.seed(0)
     env.reset()
     new_rand_obs = lambda: _rand_obs(env=env, obs_type=obs_type)
@@ -108,7 +111,7 @@ def _new_winning_obs(env, obs_type: DADSEnv.OBS_TYPE):
     return obs
 
 
-@pytest.mark.parametrize("use_state_space_reduction", [True, False])
+@pytest.mark.parametrize("use_state_space_reduction", BOOLS)
 def test_to_dynamics_obs_fn(env_fn, use_state_space_reduction: bool):
     env: DADSEnv = env_fn(use_state_space_reduction=use_state_space_reduction)
     obs = env.observation_space.sample()
