@@ -14,7 +14,7 @@ class MPPISkillProvider(SkillProvider):
         self._dynamics = dynamics
         dyn_obs_dim = len(env.to_dynamics_obs(env.observation_space.sample()))
         action_dim = dynamics._action_size
-        self._device = "cuda"
+        self._device = "cpu"
         self._planner = MPPI(dynamics=self._dynamics_fn,
                              running_cost=self._cost_fn,
                              nx=dyn_obs_dim,
