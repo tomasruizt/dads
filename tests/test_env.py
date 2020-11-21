@@ -4,11 +4,13 @@ import numpy as np
 
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
     CustomFetchPickAndPlaceEnv, FixedGoalFetchSlideEnv, make_point2d_dads_env, \
-    DADSCustomFetchReachEnv, make_fetch_reach_env, make_toylab_dads_env, DADSEnv
+    DADSCustomFetchReachEnv, make_fetch_reach_env, make_toylab_dads_env, DADSEnv, \
+    make_fetch_push_env, CustomFetchPushEnv
 
 convex_envs_fns = [
     make_fetch_reach_env,
     make_fetch_pick_and_place_env,
+    make_fetch_push_env,
     make_fetch_slide_env,
     make_point2d_dads_env,
 ]
@@ -20,6 +22,7 @@ envs_fns = [
 
 fetch_env_ctors = [
     CustomFetchPickAndPlaceEnv,
+    CustomFetchPushEnv,
     FixedGoalFetchSlideEnv,
     DADSCustomFetchReachEnv
 ]

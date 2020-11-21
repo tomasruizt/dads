@@ -7,7 +7,8 @@ from functools import partial
 
 import numpy as np
 from gym import Wrapper, ObservationWrapper, GoalEnv
-from gym.envs.robotics import FetchPickAndPlaceEnv, FetchSlideEnv, FetchEnv, FetchReachEnv
+from gym.envs.robotics import FetchPickAndPlaceEnv, FetchSlideEnv, FetchEnv, FetchReachEnv, \
+    FetchPushEnv
 from gym.wrappers import FilterObservation, FlattenObservation
 from multi_goal.envs.toy_labyrinth_env import ToyLab
 
@@ -65,6 +66,10 @@ def make_fetch_slide_env():
     return _process_fetch_env(FixedGoalFetchSlideEnv(reward_type="dense"))
 
 
+def make_fetch_push_env():
+    return _process_fetch_env(CustomFetchPushEnv(reward_type="dense"))
+
+
 def make_fetch_reach_env():
     return _process_fetch_env(DADSCustomFetchReachEnv(reward_type="dense"))
 
@@ -80,6 +85,10 @@ def _get_goal_from_state_fetch(state: np.ndarray) -> np.ndarray:
 
 
 class CustomFetchPickAndPlaceEnv(FetchPickAndPlaceEnv):
+    achieved_goal_from_state = staticmethod(_get_goal_from_state_fetch)
+
+
+class CustomFetchPushEnv(FetchPushEnv):
     achieved_goal_from_state = staticmethod(_get_goal_from_state_fetch)
 
 
