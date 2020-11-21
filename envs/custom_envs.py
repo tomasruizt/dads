@@ -15,12 +15,12 @@ from multi_goal.envs.toy_labyrinth_env import ToyLab
 from envs.point2d_env import Point2DEnv
 
 
-def make_toylab_dads_env():
+def make_toylab_dads_env(**kwargs):
     env = DADSCustomToyLabEnv()
     env = ObsAsOrderedDict(env)
     env = FilterObservation(env, filter_keys=["achieved_goal"])
     env = FlattenObservation(env)
-    return DADSWrapper(env)
+    return DADSWrapper(env, **kwargs)
 
 
 class DADSCustomToyLabEnv(ToyLab):
@@ -54,30 +54,30 @@ class ObsAsOrderedDict(ObservationWrapper):
         return OrderedDict(observation)
 
 
-def make_point2d_dads_env():
-    return DADSWrapper(Point2DEnv())
+def make_point2d_dads_env(**kwargs):
+    return DADSWrapper(Point2DEnv(), **kwargs)
 
 
-def make_fetch_pick_and_place_env():
-    return _process_fetch_env(CustomFetchPickAndPlaceEnv(reward_type="dense"))
+def make_fetch_pick_and_place_env(**kwargs):
+    return _process_fetch_env(CustomFetchPickAndPlaceEnv(reward_type="dense"), **kwargs)
 
 
-def make_fetch_slide_env():
-    return _process_fetch_env(FixedGoalFetchSlideEnv(reward_type="dense"))
+def make_fetch_slide_env(**kwargs):
+    return _process_fetch_env(FixedGoalFetchSlideEnv(reward_type="dense"), **kwargs)
 
 
-def make_fetch_push_env():
-    return _process_fetch_env(CustomFetchPushEnv(reward_type="dense"))
+def make_fetch_push_env(**kwargs):
+    return _process_fetch_env(CustomFetchPushEnv(reward_type="dense"), **kwargs)
 
 
-def make_fetch_reach_env():
-    return _process_fetch_env(DADSCustomFetchReachEnv(reward_type="dense"))
+def make_fetch_reach_env(**kwargs):
+    return _process_fetch_env(DADSCustomFetchReachEnv(reward_type="dense"), **kwargs)
 
 
-def _process_fetch_env(env: FetchEnv):
+def _process_fetch_env(env: FetchEnv, **kwargs):
     env = FilterObservation(env, filter_keys=["observation"])
     env = FlattenObservation(env)
-    return DADSWrapper(env)
+    return DADSWrapper(env, **kwargs)
 
 
 def _get_goal_from_state_fetch(state: np.ndarray) -> np.ndarray:
@@ -128,6 +128,10 @@ class DADSEnv(ABC, GoalEnv):
 
 
 class DADSWrapper(Wrapper, DADSEnv):
+    def __init__(self, env, use_state_space_reduction=True):
+        super().__init__(env)
+        self._use_state_space_reduction = use_state_space_reduction
+
     def compute_reward(self, achieved_goal, desired_goal, info):
         if info in DADSEnv.OBS_TYPE:
             return self._dads_reward(achieved_goal, desired_goal, obs_type=info)
@@ -146,6 +150,8 @@ class DADSWrapper(Wrapper, DADSEnv):
         return reward(next_achieved_goal) - reward(achieved_goal)
 
     def to_dynamics_obs(self, obs: np.ndarray) -> np.ndarray:
+        if not self._use_state_space_reduction:
+            return obs
         return self.env.achieved_goal_from_state(state=obs)
 
     def achieved_goal_from_state(self, state: np.ndarray) -> np.ndarray:

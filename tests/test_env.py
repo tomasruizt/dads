@@ -108,12 +108,16 @@ def _new_winning_obs(env, obs_type: DADSEnv.OBS_TYPE):
     return obs
 
 
-def test_to_dynamics_obs_fn(env_fn):
-    env: DADSEnv = env_fn()
+@pytest.mark.parametrize("use_state_space_reduction", [True, False])
+def test_to_dynamics_obs_fn(env_fn, use_state_space_reduction: bool):
+    env: DADSEnv = env_fn(use_state_space_reduction=use_state_space_reduction)
     obs = env.observation_space.sample()
     dynamics_obs = env.to_dynamics_obs(obs)
-    assert np.allclose(dynamics_obs, env.achieved_goal_from_state(obs))
     assert len(dynamics_obs) == env.dyn_obs_dim()
+    if use_state_space_reduction:
+        assert np.allclose(dynamics_obs, env.achieved_goal_from_state(obs))
+    else:
+        assert np.allclose(obs, env.to_dynamics_obs(obs))
 
 
 @pytest.mark.parametrize("env_ctor", fetch_env_ctors)
