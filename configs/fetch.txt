@@ -1,12 +1,11 @@
 --environment=reach
 --max_env_steps=100
---max_env_steps_eval=30
+--max_env_steps_eval=50
 
 --run_train=1
 --num_skills=3
 --skill_type=cont_uniform
 --random_skills=100
---reduced_observation_size=3
 
 --save_model=dads
 #--vid_name=skill
@@ -17,12 +16,11 @@
 --per_skill_evals=1
 --num_epochs=101
 
---replay_buffer_capacity=2000
---initial_collect_steps=1000
---collect_steps=1000
+--replay_buffer_capacity=10000
+--initial_collect_steps=500
+--collect_steps=500
 --resample_prob=1
 --steps_before_resample=50
---experiment_name=2000buffer_1000iter_1000eplen_50resample
 
 --num_components=1
 --skill_dyn_train_steps=128
@@ -32,8 +30,8 @@
 --hidden_layer_size=256
 
 # Sparse-like environment
---run_final_eval=1
+--run_final_eval=0
 --refine_steps=10
---planning_horizon=1
+--planning_horizon=5
 --primitive_horizon=1
 --num_candidate_sequences=100
