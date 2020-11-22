@@ -1332,9 +1332,9 @@ def main(_):
                 skill_provider=skill_provider,
                 render_env=True)
             for steps in grouper(n=FLAGS.max_env_steps_eval, iterable=generator):
-                dyn_l2_dist = calc_dynamics_l2(env=env, dynamics=agent.skill_dynamics, dads_steps=steps)
+                dyn_l2_dist = calc_dynamics_l2(env=eval_plan_env, dynamics=agent.skill_dynamics, dads_steps=steps)
                 print(f"Dynamics l2 error: {dyn_l2_dist:.3f}")
-                goal_l2_dist = calc_goal_l2(env=env, steps=steps)
+                goal_l2_dist = calc_goal_l2(env=eval_plan_env, steps=steps)
                 print(f"Goal l2 error: {goal_l2_dist:.3f}")
 
         if record_mpc_performance:
