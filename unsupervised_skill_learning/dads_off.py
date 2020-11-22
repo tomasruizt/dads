@@ -30,7 +30,7 @@ from common_funcs import DADSStep, grouper, check_reward_fn
 from custom_mppi import MPPISkillProvider
 from density_estimation import DensityEstimator
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
-    make_point2d_dads_env, make_fetch_reach_env, DADSEnv
+    make_point2d_dads_env, make_fetch_reach_env, DADSEnv, make_fetch_push_env
 from lib.simple_buffer import SimpleBuffer, Transition
 from skill_dynamics import SkillDynamics, l2
 from unsupervised_skill_learning.common_funcs import process_observation_given, \
@@ -256,6 +256,7 @@ def _normal_projection_net(action_spec, init_means_output_factor=0.1):
 custom_envs_ctors = dict(
     point2d=make_point2d_dads_env,
     reach=make_fetch_reach_env,
+    push=make_fetch_push_env,
     pickandplace=make_fetch_pick_and_place_env,
     slide=make_fetch_slide_env,
 )
