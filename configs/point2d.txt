@@ -13,14 +13,13 @@
 --record_freq=25
 --num_evals=0
 --per_skill_evals=10
---num_epochs=101
+--num_epochs=51
 
 --replay_buffer_capacity=2000
 --initial_collect_steps=1000
 --collect_steps=1000
 --resample_prob=1
 --steps_before_resample=25
---experiment_name=2000buffer-1000iter-100eplen-25resample
 
 --skill_dyn_train_steps=64
 --skill_dyn_batch_size=256

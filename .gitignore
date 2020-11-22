@@ -14,7 +14,7 @@ dkitty_eval.sh
 experiments/
 dads_token.txt
 dads.iml
-results/
+results*/
 density-model-ckpt/
 logs/
 her-results/
