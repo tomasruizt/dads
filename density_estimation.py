@@ -64,7 +64,7 @@ class DensityEstimator:
             tfk.layers.Dense(units=tfp.layers.MultivariateNormalTriL.params_size(latent_space_dim)),
             tfp.layers.MultivariateNormalTriL(
                 event_size=latent_space_dim,
-                activity_regularizer=tfp.layers.KLDivergenceRegularizer(prior, weight=0.01, use_exact_kl=True),
+                activity_regularizer=tfp.layers.KLDivergenceRegularizer(prior, weight=0.005, use_exact_kl=True),
             )
         ])
 
@@ -103,20 +103,29 @@ def sample(array: np.ndarray, n: int) -> np.ndarray:
     return array[indices]
 
 
-def viz_grid_probabilites(prob_fn: Callable[[np.ndarray], np.ndarray]):
+def viz_grid_probabilites(prob_fn: Callable[[np.ndarray], np.ndarray],
+                          xlims=(-2, 2), ylims=(-1, 1)):
     plt.ion()
     grid_granularity = 100
-    X, Y = np.mgrid[-2:2:complex(0, grid_granularity), -1:1:complex(0, grid_granularity)]
+    cxmin, cxmax = 1.2*np.array(xlims)  # contour limits
+    cymin, cymax = 1.2*np.array(ylims)
+    X, Y = np.mgrid[cxmin:cxmax:complex(0, grid_granularity), cymin:cymax:complex(0, grid_granularity)]
     pts = np.asarray([X.ravel(), Y.ravel()]).T
 
     pts_probs = prob_fn(pts)
 
     Z = pts_probs.reshape(grid_granularity, grid_granularity)
     fig, ax = plt.subplots()
-    ax.contourf(X, Y, Z, cmap='Blues', zorder=-1)
+    (xmin, xmax), (ymin, ymax) = xlims, ylims
+    xcorners, ycorners = [xmin, xmin, xmax, xmax, xmin], [ymin, ymax, ymax, ymin, ymin]
+    ax.plot(xcorners, ycorners, c="red")
+    ax.set_xlim((cxmin, cxmax))
+    ax.set_ylim((cymin, cymax))
+    fig.colorbar(ax.contourf(X, Y, Z, cmap='Blues', zorder=-1))
     ax.contour(X, Y, Z, zorder=-1)
     fig.canvas.draw()
     fig.canvas.flush_events()
+    return fig, ax
 
 
 if __name__ == '__main__':
@@ -133,7 +142,7 @@ if __name__ == '__main__':
     )
 
     def viz_callback(epoch, *args):
-        if epoch % 5 == 0:
+        if epoch % 10 == 0:
             viz_grid_probabilites(prob_fn=lambda pts: model.get_input_density(pts).numpy())
 
     model_filename = "density-model-ckpt/"
