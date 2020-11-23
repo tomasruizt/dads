@@ -894,7 +894,9 @@ def pct_of_goal_controlling_transitions(env: DADSEnv, trajs: Sequence[Trajectory
     next_obs = np.vstack([t.observation[:, 1, :] for t in trajs])
     next_goal = env.achieved_goal_from_state(next_obs)
     goal_deltas = np.linalg.norm(next_goal - cur_goal, axis=1)
-    non_moving = np.isclose(0, goal_deltas)
+
+    fetch_goal_space_diagonal = 0.5
+    non_moving = goal_deltas < (fetch_goal_space_diagonal/1000)
     return 1 - non_moving.mean()
 
 
