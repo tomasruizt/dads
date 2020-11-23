@@ -27,7 +27,8 @@ import sys
 
 from tf_agents.trajectories.time_step import TimeStep
 
-from common_funcs import DADSStep, grouper, check_reward_fn, NullSkillProvider
+from common_funcs import DADSStep, grouper, check_reward_fn, NullSkillProvider, \
+    RandomSkillProvider
 from custom_mppi import MPPISkillProvider
 from density_estimation import DensityEstimator
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
@@ -209,7 +210,8 @@ flags.DEFINE_integer('normalize_data', 1, 'Maintain running averages')
 # debug
 flags.DEFINE_integer('debug', 0, 'Creates extra summaries')
 flags.DEFINE_boolean('manual_control_mode', False, 'Pop a slider to control the skills manually.')
-flags.DEFINE_boolean('no_control_mode', False, 'See behavior and metrics under no control')
+flags.DEFINE_boolean('no_control_mode', False, 'Viz behavior and metrics under no control')
+flags.DEFINE_boolean('random_skills_control_mode', False, 'Viz behavior under random skills')
 
 # DKitty
 flags.DEFINE_integer('expose_last_action', 1, 'Add the last action to the observation')
@@ -859,6 +861,19 @@ def enter_no_control_mode(dynamics: SkillDynamics):
     evaluate_l2_errors(generator, env=env, dynamics=dynamics)
 
 
+def enter_random_skill_control_mode(policy: py_tf_policy):
+    generator = evaluate_skill_provider_loop(
+        env=get_environment(env_name=FLAGS.environment + "_goal"),
+        policy=policy,
+        episode_length=FLAGS.max_env_steps_eval,
+        hide_coords_fn=hide_coords,
+        clip_action_fn=clip_action,
+        skill_provider=RandomSkillProvider(skill_dim=FLAGS.num_skills),
+        render_env=True
+    )
+    consume(generator)
+
+
 class Policy:
     def action_mean(self, ts: TimeStep) -> np.ndarray:
         raise NotImplementedError
@@ -881,6 +896,7 @@ def calc_dynamics_l2(env: DADSEnv, dynamics: SkillDynamics, dads_steps: Sequence
 
     return l2(next_dyn_obs, pred_next_obs)
 
+
 def calc_goal_l2(env: DADSEnv, steps: Sequence[DADSStep]) -> float:
     desired_goals = np.asarray([s.goal for s in steps])
     achieved_goals = env.achieved_goal_from_state(np.asarray([s.ts_p1.observation for s in steps]))
@@ -893,11 +909,15 @@ def pct_of_goal_controlling_transitions(env: DADSEnv, trajs: Sequence[Trajectory
 
     next_obs = np.vstack([t.observation[:, 1, :] for t in trajs])
     next_goal = env.achieved_goal_from_state(next_obs)
-    goal_deltas = np.linalg.norm(next_goal - cur_goal, axis=1)
 
-    fetch_goal_space_diagonal = 0.5
-    non_moving = goal_deltas < (fetch_goal_space_diagonal/1000)
+    non_moving = _fetch_have_goals_nonmoving(next_goal=next_goal, cur_goal=cur_goal)
     return 1 - non_moving.mean()
+
+
+def _fetch_have_goals_nonmoving(next_goal: np.ndarray, cur_goal: np.ndarray) -> np.ndarray:
+    goal_deltas = np.linalg.norm(next_goal - cur_goal, axis=1)
+    fetch_goal_space_diagonal = 0.5
+    return goal_deltas < (fetch_goal_space_diagonal/1000)
 
 
 def main(_):
@@ -1107,9 +1127,11 @@ def main(_):
           return nest.map_structure(lambda x: x[valid_indices], trajectory)
 
         if FLAGS.manual_control_mode:
-            return enter_manual_control_mode(eval_policy)
+            return enter_manual_control_mode(eval_policy=eval_policy)
         if FLAGS.no_control_mode:
             return enter_no_control_mode(dynamics=agent.skill_dynamics)
+        if FLAGS.random_skills_control_mode:
+            return enter_random_skill_control_mode(policy=eval_policy)
 
         if iter_count == 0:
           time_step, collect_info = collect_experience(

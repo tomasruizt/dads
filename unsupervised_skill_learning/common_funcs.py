@@ -135,10 +135,21 @@ def clip(x, low: float, high: float):
 
 class SkillProvider(ABC):
     def start_episode(self):
-        return NotImplementedError
+        raise NotImplementedError
 
-    def get_skill(self, ts: TimeStep):
-        return NotImplementedError
+    def get_skill(self, ts: TimeStep) -> np.ndarray:
+        raise NotImplementedError
+
+
+class RandomSkillProvider(SkillProvider):
+    def __init__(self, skill_dim: int):
+        self._skill_dim = skill_dim
+
+    def start_episode(self):
+        pass
+
+    def get_skill(self, ts: TimeStep) -> np.ndarray:
+        return np.random.uniform(-1, 1, self._skill_dim)
 
 
 class NullSkillProvider(SkillProvider):
