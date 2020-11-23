@@ -827,7 +827,7 @@ class UniformResampler:
 
     def train_density(self) -> None:
         deltas = self._get_dyn_obs_deltas(self._buffer.sample(FLAGS.replay_buffer_capacity))
-        self._estimator.VAE.fit(x=deltas, y=deltas, verbose=0, batch_size=256, epochs=3)
+        self._estimator.VAE.fit(x=deltas, y=deltas, verbose=0, batch_size=256)
 
     @staticmethod
     def filter_trajectory(trajectory: Trajectory, indices: np.ndarray) -> Trajectory:
