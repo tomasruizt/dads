@@ -141,6 +141,17 @@ class SkillProvider(ABC):
         return NotImplementedError
 
 
+class NullSkillProvider(SkillProvider):
+    def __init__(self, skill_dim: int):
+        self._skill_dim = skill_dim
+
+    def start_episode(self):
+        pass
+
+    def get_skill(self, ts: TimeStep):
+        return np.zeros(self._skill_dim)
+
+
 class SliderSkillProvider(SkillProvider):
     def __init__(self, num_sliders: int):
         self._slider = create_sliders_widget(dim=num_sliders)

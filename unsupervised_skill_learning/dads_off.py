@@ -18,7 +18,8 @@ from __future__ import print_function
 
 import os
 import io
-from typing import List, Generator, Sequence
+from functools import partial
+from typing import List, Generator, Sequence, Callable
 import gtimer as gt
 from absl import flags, logging
 
@@ -26,7 +27,7 @@ import sys
 
 from tf_agents.trajectories.time_step import TimeStep
 
-from common_funcs import DADSStep, grouper, check_reward_fn
+from common_funcs import DADSStep, grouper, check_reward_fn, NullSkillProvider
 from custom_mppi import MPPISkillProvider
 from density_estimation import DensityEstimator
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
@@ -46,13 +47,14 @@ matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
-
+tf.config.threading.set_intra_op_parallelism_threads(1)
+tf.config.threading.set_inter_op_parallelism_threads(1)
 from tf_agents.agents.ddpg import critic_network
 from tf_agents.agents.sac import sac_agent
 from tf_agents.environments import suite_mujoco
 from tf_agents.trajectories import time_step as ts
 from tf_agents.environments.suite_gym import wrap_env
-from tf_agents.trajectories.trajectory import from_transition, Trajectory
+from tf_agents.trajectories.trajectory import Trajectory
 from tf_agents.networks import actor_distribution_network
 from tf_agents.networks import normal_projection_network
 from tf_agents.policies import ou_noise_policy
@@ -207,6 +209,7 @@ flags.DEFINE_integer('normalize_data', 1, 'Maintain running averages')
 # debug
 flags.DEFINE_integer('debug', 0, 'Creates extra summaries')
 flags.DEFINE_boolean('manual_control_mode', False, 'Pop a slider to control the skills manually.')
+flags.DEFINE_boolean('no_control_mode', False, 'See behavior and metrics under no control')
 
 # DKitty
 flags.DEFINE_integer('expose_last_action', 1, 'Add the last action to the observation')
@@ -801,21 +804,28 @@ class UniformResampler:
         return next_dyn_obs - dyn_obs
 
     def resample(self, num_batches: int, batch_size: int,
-                 from_trajectory: Trajectory = None) -> List[Trajectory]:
+                 from_trajectory: Trajectory = None, tb_log_fn: Callable = None) -> List[Trajectory]:
         if from_trajectory is None:
             from_trajectory = self._buffer.sample(num_batches*batch_size)
         deltas = self._get_dyn_obs_deltas(from_trajectory)
 
         probs = self.tf_session.run(self._estimator.get_input_density(x=deltas))
+        tb_log_fn(name="pre-resampling/min(p)", scalar=np.min(probs))
+        tb_log_fn(name="pre-resampling/max(p)", scalar=np.max(probs))
+        tb_log_fn(name="pre-resampling/mean(p)", scalar=np.mean(probs))
+
         importance_sampling_weights = 1 / probs.astype(np.float64)
         resampling_probs = importance_sampling_weights / sum(importance_sampling_weights)
+        tb_log_fn(name="post-resampling/min(p)", scalar=np.min(resampling_probs))
+        tb_log_fn(name="post-resampling/max(p)", scalar=np.max(resampling_probs))
+        tb_log_fn(name="post-resampling/mean(p)", scalar=np.mean(resampling_probs))
 
         all_indices = np.random.choice(len(deltas), size=(num_batches, batch_size), p=resampling_probs)
         return [self.filter_trajectory(from_trajectory, indices) for indices in all_indices]
 
     def train_density(self) -> None:
-        deltas = self._get_dyn_obs_deltas(self._buffer.sample(256 * 20))
-        self._estimator.VAE.fit(x=deltas, y=deltas, verbose=0, batch_size=256)
+        deltas = self._get_dyn_obs_deltas(self._buffer.sample(FLAGS.replay_buffer_capacity))
+        self._estimator.VAE.fit(x=deltas, y=deltas, verbose=0, batch_size=256, epochs=3)
 
     @staticmethod
     def filter_trajectory(trajectory: Trajectory, indices: np.ndarray) -> Trajectory:
@@ -835,6 +845,33 @@ def enter_manual_control_mode(eval_policy: py_tf_policy.PyTFPolicy):
     consume(generator)
 
 
+def enter_no_control_mode(dynamics: SkillDynamics):
+    env: DADSEnv = get_environment(env_name=FLAGS.environment + "_goal")
+    generator = evaluate_skill_provider_loop(
+        env=env,
+        policy=NullActionPolicy(action_dim=env.action_space.shape[0]),
+        episode_length=FLAGS.max_env_steps_eval,
+        hide_coords_fn=hide_coords,
+        clip_action_fn=clip_action,
+        skill_provider=NullSkillProvider(skill_dim=FLAGS.num_skills),
+        render_env=True
+    )
+    evaluate_l2_errors(generator, env=env, dynamics=dynamics)
+
+
+class Policy:
+    def action_mean(self, ts: TimeStep) -> np.ndarray:
+        raise NotImplementedError
+
+
+class NullActionPolicy(Policy):
+    def __init__(self, action_dim: int):
+        self._action_dim = action_dim
+
+    def action_mean(self, ts: TimeStep) -> np.ndarray:
+        return np.zeros(self._action_dim)
+
+
 def calc_dynamics_l2(env: DADSEnv, dynamics: SkillDynamics, dads_steps: Sequence[DADSStep]) -> float:
     cur_obs = np.asarray([s.ts.observation for s in dads_steps])
     skills = np.asarray([s.skill for s in dads_steps])
@@ -848,6 +885,17 @@ def calc_goal_l2(env: DADSEnv, steps: Sequence[DADSStep]) -> float:
     desired_goals = np.asarray([s.goal for s in steps])
     achieved_goals = env.achieved_goal_from_state(np.asarray([s.ts_p1.observation for s in steps]))
     return l2(achieved_goals, desired_goals)
+
+
+def pct_of_goal_controlling_transitions(env: DADSEnv, trajs: Sequence[Trajectory]) -> float:
+    cur_obs = np.vstack([t.observation[:, 0, :] for t in trajs])
+    cur_goal = env.achieved_goal_from_state(cur_obs)
+
+    next_obs = np.vstack([t.observation[:, 1, :] for t in trajs])
+    next_goal = env.achieved_goal_from_state(next_obs)
+    goal_deltas = np.linalg.norm(next_goal - cur_goal, axis=1)
+    non_moving = np.isclose(0, goal_deltas)
+    return 1 - non_moving.mean()
 
 
 def main(_):
@@ -1058,6 +1106,8 @@ def main(_):
 
         if FLAGS.manual_control_mode:
             return enter_manual_control_mode(eval_policy)
+        if FLAGS.no_control_mode:
+            return enter_no_control_mode(dynamics=agent.skill_dynamics)
 
         if iter_count == 0:
           time_step, collect_info = collect_experience(
@@ -1075,11 +1125,14 @@ def main(_):
           gt.stamp('init-collect', quick_print=True)
 
         for iter_count in gt.timed_for(range(iter_count, FLAGS.num_epochs), name="main-loop"):
-          print('iteration index:', iter_count)
+          def tb_log(name: str, scalar):
+              tensorboard_log_scalar(name=name, scalar=scalar, tb_writer=train_writer, step_num=iter_count)
+
+          fprint('iteration index:', iter_count)
 
           # model save
           if FLAGS.save_model is not None and iter_count % FLAGS.save_freq == 0:
-            print('Saving stuff')
+            fprint('Saving stuff')
             train_checkpointer.save(global_step=iter_count)
             policy_checkpointer.save(global_step=iter_count)
             buffer.save(fpath=replay_buffer_saving_fpath)
@@ -1126,7 +1179,8 @@ def main(_):
               traj_list = uniform_resampler.resample(
                   num_batches=num_batches,
                   batch_size=batch_size,
-                  from_trajectory=large_trajectory
+                  from_trajectory=large_trajectory,
+                  tb_log_fn=tb_log
               )
               return traj_list
 
@@ -1141,6 +1195,8 @@ def main(_):
                   return buffer.sample(n=FLAGS.skill_dyn_batch_size)
               trajectories_list = [get_batch() for _ in range(FLAGS.skill_dyn_train_steps)]
               gt.stamp("[dyn]sample")
+          pct = pct_of_goal_controlling_transitions(env=py_env, trajs=trajectories_list)
+          tb_log(name="dads/dyn-train-goal-changing-transitions[%]", scalar=pct)
 
           dynamics_l2_error = []
           # TODO(architsh): clear_buffer_every_iter needs to fix these as well
@@ -1196,7 +1252,6 @@ def main(_):
             # need to match the assert structure
             if FLAGS.skill_dynamics_relabel_type is not None and 'importance_sampling' in FLAGS.skill_dynamics_relabel_type:
               trajectory_sample = trajectory_sample._replace(policy_info=())
-            gt.stamp("[agent]other", unique=False)
 
             if not FLAGS.clear_buffer_every_iter:
               dads_reward, info = agent.train_loop(
@@ -1254,7 +1309,7 @@ def main(_):
                 vid_name=FLAGS.vid_name,
                 plot_name='traj_plot')
 
-          do_perform_mpc_eval = iter_count > 0 and iter_count % 2 == 0
+          do_perform_mpc_eval = iter_count > 0 and iter_count % 20 == 0
           if do_perform_mpc_eval:
             env = get_environment(env_name=FLAGS.environment + "_goal")
             skill_provider = MPPISkillProvider(env=env, dynamics=agent.skill_dynamics, skills_to_plan=FLAGS.planning_horizon)
@@ -1265,7 +1320,7 @@ def main(_):
                 hide_coords_fn=hide_coords,
                 clip_action_fn=clip_action,
                 skill_provider=skill_provider,
-                num_episodes=20)
+                num_episodes=40)
             steps = list(generator)
             dyn_l2_error = calc_dynamics_l2(dynamics=agent.skill_dynamics, dads_steps=steps, env=env)
             tb_log("DADS-MPC/dynamics-l2-error", dyn_l2_error)
@@ -1275,7 +1330,7 @@ def main(_):
 
         py_env.close()
         try:
-            print(gt.report(include_itrs=False, include_stats=False, format_options=dict(stamp_name_width=30)))
+            fprint(gt.report(include_itrs=False, include_stats=False, format_options=dict(stamp_name_width=30)))
         except ValueError:
             pass
 
@@ -1331,14 +1386,29 @@ def main(_):
                 clip_action_fn=clip_action,
                 skill_provider=skill_provider,
                 render_env=True)
-            for steps in grouper(n=FLAGS.max_env_steps_eval, iterable=generator):
-                dyn_l2_dist = calc_dynamics_l2(env=eval_plan_env, dynamics=agent.skill_dynamics, dads_steps=steps)
-                print(f"Dynamics l2 error: {dyn_l2_dist:.3f}")
-                goal_l2_dist = calc_goal_l2(env=eval_plan_env, steps=steps)
-                print(f"Goal l2 error: {goal_l2_dist:.3f}")
+            evaluate_l2_errors(generator, env=eval_plan_env, dynamics=agent.skill_dynamics)
 
         if record_mpc_performance:
             eval_plan_env.close()
+
+
+def evaluate_l2_errors(generator, env: DADSEnv, dynamics: SkillDynamics):
+    do_log = False
+    if do_log:
+        filename = f"{FLAGS.environment}-perEpisode-l2.csv"
+        with open(filename, "w") as file:
+            file.write(f"MEAN_DYN_L2_ERROR,MEAN_GOAL_L2_ERROR\n")
+    for steps in grouper(n=FLAGS.max_env_steps_eval, iterable=generator):
+        dyn_l2_dist = calc_dynamics_l2(env=env, dynamics=dynamics, dads_steps=steps)
+        print(f"Dynamics l2 error: {dyn_l2_dist:.3f}")
+        goal_l2_dist = calc_goal_l2(env=env, steps=steps)
+        print(f"Goal l2 error: {goal_l2_dist:.3f}")
+        if do_log:
+            with open(filename, "a") as file:
+                file.write(f"{dyn_l2_dist},{goal_l2_dist}\n")
+
+
+fprint = partial(print, flush=True)
 
 
 def tensorboard_log_scalar(tb_writer, scalar: float, name: str, step_num: int) -> None:

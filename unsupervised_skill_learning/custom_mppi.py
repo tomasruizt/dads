@@ -1,5 +1,7 @@
 import numpy as np
 import torch
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
 from pytorch_mppi.mppi import MPPI
 from tf_agents.trajectories.time_step import TimeStep
 
@@ -18,7 +20,7 @@ class MPPISkillProvider(SkillProvider):
                              running_cost=self._cost_fn,
                              nx=env.dyn_obs_dim(),
                              u_min=-torch.ones(action_dim), u_max=torch.ones(action_dim),
-                             noise_sigma=0.1*torch.eye(action_dim), device=self._device, horizon=skills_to_plan, lambda_=1e-6)
+                             noise_sigma=0.1*torch.eye(action_dim), device=self._device, horizon=skills_to_plan, lambda_=1e-3)
 
     def _dynamics_fn(self, state: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
         res = self._dynamics.predict_state(timesteps=state.cpu().numpy(), actions=actions.cpu().numpy())
