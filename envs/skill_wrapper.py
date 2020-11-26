@@ -53,6 +53,9 @@ class SkillWrapper(Wrapper):
       size = self.env.observation_space.shape[0] + self._num_skills
     self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(size,), dtype='float32')
 
+    self._set_skill()
+    self._step_count = 0
+
   def _remake_time_step(self, cur_obs):
     if isinstance(self.env.observation_space, gym.spaces.Dict):
       cur_obs = cur_obs['observation']
@@ -79,8 +82,6 @@ class SkillWrapper(Wrapper):
 
   def reset(self):
     cur_obs = self.env.reset()
-    self._set_skill()
-    self._step_count = 0
     return self._remake_time_step(cur_obs)
 
   def step(self, action):
