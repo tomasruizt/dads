@@ -29,7 +29,7 @@ from tf_agents.trajectories.time_step import TimeStep
 
 from common_funcs import DADSStep, grouper, check_reward_fn, NullSkillProvider, \
     RandomSkillProvider
-from custom_mppi import MPPISkillProvider
+from custom_mppi import MPPISkillProvider, SimpleDynamics
 from density_estimation import DensityEstimator
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
     make_point2d_dads_env, make_fetch_reach_env, DADSEnv, make_fetch_push_env
@@ -212,6 +212,8 @@ flags.DEFINE_integer('debug', 0, 'Creates extra summaries')
 flags.DEFINE_boolean('manual_control_mode', False, 'Pop a slider to control the skills manually.')
 flags.DEFINE_boolean('no_control_mode', False, 'Viz behavior and metrics under no control')
 flags.DEFINE_boolean('random_skills_control_mode', False, 'Viz behavior under random skills')
+flags.DEFINE_boolean('test_mpc_control_mode', False, 'Viz mpc behavior on point2d environment'
+                                                     'with perfectly known dynamics.')
 
 # DKitty
 flags.DEFINE_integer('expose_last_action', 1, 'Add the last action to the observation')
@@ -955,6 +957,18 @@ def _fetch_have_goals_nonmoving(next_goal: np.ndarray, cur_goal: np.ndarray) -> 
     return goal_deltas < (fetch_goal_space_diagonal/1000)
 
 
+def enter_test_mpc_control_mode():
+    env = wrap_env(make_point2d_dads_env())
+    provider = MPCSkillProvider(dynamics=SimpleDynamics(), env=env)
+    while True:
+        ts = env.reset()
+        provider.start_episode()
+        for _ in range(30):
+            env.render("human")
+            action = np.tanh(provider.get_skill(ts=ts))
+            ts = env.step(action)
+
+
 def main(_):
   logging.info(f"########### USE RESAMPLING SCHEME: {FLAGS.use_dynamics_uniform_resampling}")
   logging.info(f"########### USE STATE SPACE REDUCTION: {FLAGS.use_state_space_reduction}")
@@ -1168,6 +1182,8 @@ def main(_):
             return enter_no_control_mode(dynamics=agent.skill_dynamics)
         if FLAGS.random_skills_control_mode:
             return enter_random_skill_control_mode(policy=eval_policy)
+        if FLAGS.test_mpc_control_mode:
+            return enter_test_mpc_control_mode()
 
         if iter_count == 0:
           time_step, collect_info = collect_experience(

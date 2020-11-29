@@ -21,7 +21,6 @@ class MPPISkillProvider(SkillProvider):
         self._planner = MPPI(dynamics=self._dynamics_fn,
                              running_cost=self._cost_fn,
                              nx=env.dyn_obs_dim(),
-                             u_min=-torch.ones(skill_dim), u_max=torch.ones(skill_dim),
                              noise_sigma=0.1*torch.eye(skill_dim), device=self._device, horizon=skills_to_plan, lambda_=1e-6)
 
     def _dynamics_fn(self, state: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:

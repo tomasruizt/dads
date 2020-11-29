@@ -18,14 +18,14 @@ def mppi_next_skill_loop(dynamics,
         raise NotImplementedError
 
     covariance = 1
-    planned_skills_means = np.random.uniform(-1, 1, size=(num_skills_to_plan, skill_dim))
+    planned_skills_means = np.zeros((num_skills_to_plan, skill_dim))
     sample_mvn = partial(np.random.multivariate_normal,
                          cov=covariance * np.eye(skill_dim),
                          size=num_candidate_sequences)
     while True:
         cur_timestep = yield
         for _ in range(refine_steps):
-            candidate_skills_seqs = np.tanh([sample_mvn(m) for m in planned_skills_means])
+            candidate_skills_seqs = np.asarray([sample_mvn(m) for m in planned_skills_means])
             candidate_skills_seqs = smooth(candidate_skills_seqs, beta=smoothing_beta)
             running_cur_state = np.array([env.to_dynamics_obs(cur_timestep.observation)] * num_candidate_sequences)
             running_reward = np.zeros(num_candidate_sequences)
@@ -42,9 +42,7 @@ def mppi_next_skill_loop(dynamics,
 
         chosen_skill_mean = planned_skills_means[0]
         yield chosen_skill_mean.copy()
-
-        random_skill = np.random.uniform(-1, 1, size=(1, skill_dim))
-        planned_skills_means = np.vstack((planned_skills_means[1:], random_skill))
+        planned_skills_means = np.vstack((planned_skills_means[1:], np.zeros((1, skill_dim))))
 
 
 def smooth(skill_seqs, beta):

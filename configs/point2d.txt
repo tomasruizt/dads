@@ -4,7 +4,7 @@
 
 --run_train=1
 --num_skills=2
---skill_type=cont_uniform
+--skill_type=gaussian
 --random_skills=100
 
 --save_model=dads
@@ -19,7 +19,7 @@
 --initial_collect_steps=250
 --collect_steps=250
 --resample_prob=1
---steps_before_resample=25
+--steps_before_resample=50
 
 --skill_dyn_train_steps=32
 --skill_dyn_batch_size=128
@@ -31,8 +31,9 @@
 --num_components=1
 
 # MPPI
---run_final_eval=0
+--run_final_eval=1
+--mppi_gamma=100
 --refine_steps=10
 --planning_horizon=1
 --primitive_horizon=1
---num_candidate_sequences=100
+--num_candidate_sequences=500
