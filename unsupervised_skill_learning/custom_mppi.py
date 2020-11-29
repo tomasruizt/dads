@@ -1,12 +1,14 @@
 import numpy as np
 import torch
+from tf_agents.environments.suite_gym import wrap_env
+
 torch.set_num_threads(1)
 torch.set_num_interop_threads(1)
 from pytorch_mppi.mppi import MPPI
 from tf_agents.trajectories.time_step import TimeStep
 
 from common_funcs import SkillProvider
-from envs.custom_envs import DADSEnv
+from envs.custom_envs import DADSEnv, make_point2d_dads_env
 from skill_dynamics import SkillDynamics
 
 
@@ -14,13 +16,13 @@ class MPPISkillProvider(SkillProvider):
     def __init__(self, env: DADSEnv, dynamics: SkillDynamics, skills_to_plan: int):
         self._env = env
         self._dynamics = dynamics
-        action_dim = dynamics._action_size
+        skill_dim = dynamics._action_size
         self._device = "cpu"
         self._planner = MPPI(dynamics=self._dynamics_fn,
                              running_cost=self._cost_fn,
                              nx=env.dyn_obs_dim(),
-                             u_min=-torch.ones(action_dim), u_max=torch.ones(action_dim),
-                             noise_sigma=0.1*torch.eye(action_dim), device=self._device, horizon=skills_to_plan, lambda_=1e-6)
+                             u_min=-torch.ones(skill_dim), u_max=torch.ones(skill_dim),
+                             noise_sigma=0.1*torch.eye(skill_dim), device=self._device, horizon=skills_to_plan, lambda_=1e-6)
 
     def _dynamics_fn(self, state: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
         res = self._dynamics.predict_state(timesteps=state.cpu().numpy(), actions=actions.cpu().numpy())
@@ -38,3 +40,23 @@ class MPPISkillProvider(SkillProvider):
     def get_skill(self, ts: TimeStep) -> np.ndarray:
         dyn_obs = self._env.to_dynamics_obs(ts.observation)
         return self._planner.command(state=dyn_obs).cpu().numpy()
+
+
+class SimpleDynamics:
+    _action_size = 2
+
+    @staticmethod
+    def predict_state(timesteps, actions):
+        return np.clip(timesteps + 0.1*actions, -1, 1)
+
+
+if __name__ == '__main__':
+    env = wrap_env(make_point2d_dads_env())
+    provider = MPPISkillProvider(env=env, dynamics=SimpleDynamics(), skills_to_plan=1)
+    while True:
+        ts = env.reset()
+        provider.start_episode()
+        for _ in range(30):
+            env.render("human")
+            action = provider.get_skill(ts=ts)
+            ts = env.step(action)
