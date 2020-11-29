@@ -818,20 +818,55 @@ class UniformResampler:
 
         importance_sampling_weights = 1 / probs.astype(np.float64)
         resampling_probs = importance_sampling_weights / sum(importance_sampling_weights)
-        tb_log_fn(name="post-resampling/min(p)", scalar=np.min(resampling_probs))
-        tb_log_fn(name="post-resampling/max(p)", scalar=np.max(resampling_probs))
-        tb_log_fn(name="post-resampling/mean(p)", scalar=np.mean(resampling_probs))
+        log_resampling_probs(tb_log_fn=tb_log_fn, p=resampling_probs)
 
-        all_indices = np.random.choice(len(deltas), size=(num_batches, batch_size), p=resampling_probs)
-        return [self.filter_trajectory(from_trajectory, indices) for indices in all_indices]
+        all_indices = np.random.choice(len(from_trajectory.observation), size=(num_batches, batch_size), p=resampling_probs)
+        return [filter_trajectory(from_trajectory, indices) for indices in all_indices]
 
     def train_density(self) -> None:
         deltas = self._get_dyn_obs_deltas(self._buffer.sample(FLAGS.replay_buffer_capacity))
         self._estimator.VAE.fit(x=deltas, y=deltas, verbose=0, batch_size=256)
 
-    @staticmethod
-    def filter_trajectory(trajectory: Trajectory, indices: np.ndarray) -> Trajectory:
-        return tf.nest.map_structure(lambda trj: trj[indices], trajectory)
+
+def log_resampling_probs(tb_log_fn: Callable, p: np.ndarray) -> None:
+    tb_log_fn(name="post-resampling/min(p)", scalar=np.min(p))
+    tb_log_fn(name="post-resampling/max(p)", scalar=np.max(p))
+    tb_log_fn(name="post-resampling/mean(p)", scalar=np.mean(p))
+
+
+def filter_trajectory(trajectory: Trajectory, indices: np.ndarray) -> Trajectory:
+    return tf.nest.map_structure(lambda trj: trj[indices], trajectory)
+
+
+class SimpleResampler:
+    def __init__(self, env: DADSEnv):
+        self._env = env
+
+    def resample(self, num_batches: int, batch_size: int,
+             from_trajectory: Trajectory = None, tb_log_fn: Callable = None) -> List[Trajectory]:
+        resampling_probs = self._simple_resampling_probs(traj=from_trajectory)
+        log_resampling_probs(tb_log_fn=tb_log_fn, p=resampling_probs)
+
+        all_indices = np.random.choice(len(from_trajectory.observation), size=(num_batches, batch_size), p=resampling_probs)
+        return [filter_trajectory(from_trajectory, indices) for indices in all_indices]
+
+    def _simple_resampling_probs(self, traj: Trajectory):
+        cur_obs = traj.observation[:, 0, :-FLAGS.num_skills]
+        cur_goal = self._env.achieved_goal_from_state(cur_obs)
+
+        next_obs = traj.observation[:, 1, :-FLAGS.num_skills]
+        next_goal = self._env.achieved_goal_from_state(next_obs)
+
+        nonmoving = _fetch_have_goals_nonmoving(next_goal=next_goal, cur_goal=cur_goal)
+        pct = nonmoving.mean()
+        if np.isclose(pct, 1):
+            return np.ones(len(cur_obs)) / len(cur_obs)
+
+        probs = np.where(nonmoving, 1 / pct, 1 / (1 - pct))
+        return probs / probs.sum()
+
+    def train_density(self) -> None:
+        pass
 
 
 def enter_manual_control_mode(eval_policy: py_tf_policy.PyTFPolicy):
@@ -1072,7 +1107,8 @@ def main(_):
 
     buffer = SimpleBuffer(capacity=FLAGS.replay_buffer_capacity)
 
-    uniform_resampler = UniformResampler(env=py_env, buffer=buffer, tf_graph=agent._graph)
+    #uniform_resampler = UniformResampler(env=py_env, buffer=buffer, tf_graph=agent._graph)
+    uniform_resampler = SimpleResampler(env=py_env)
 
     # insert experience manually with relabelled rewards and skills
     agent.build_agent_graph()
@@ -1222,7 +1258,9 @@ def main(_):
           pct = pct_of_goal_controlling_transitions(env=py_env, trajs=trajectories_list)
           tb_log(name="dads/dyn-train-goal-changing-transitions[%]", scalar=pct)
 
-          dynamics_l2_error = []
+          dyn_l2_error = []
+          dyn_l2_error_nonmoving_goal = []
+
           # TODO(architsh): clear_buffer_every_iter needs to fix these as well
           for trajectory_sample in trajectories_list:
             # is_weights is None usually, unless relabelling involves importance_sampling
@@ -1237,7 +1275,7 @@ def main(_):
             target_obs = py_env.to_dynamics_obs(
                 trajectory_sample.observation[:, 1, :-FLAGS.num_skills])
             if FLAGS.clear_buffer_every_iter:
-              info = agent.skill_dynamics.train(
+              agent.skill_dynamics.train(
                   input_obs,
                   cur_skill,
                   target_obs,
@@ -1245,14 +1283,25 @@ def main(_):
                   batch_weights=is_weights,
                   num_steps=FLAGS.skill_dyn_train_steps)
             else:
-              info = agent.skill_dynamics.train(
+              agent.skill_dynamics.train(
                   input_obs,
                   cur_skill,
                   target_obs,
                   batch_size=-1,
                   batch_weights=is_weights,
                   num_steps=1)
-            dynamics_l2_error.append(info["l2-error"])
+
+            if FLAGS.use_state_space_reduction:
+                cur_goal = input_obs
+                next_goal = target_obs
+            else:
+                cur_goal = py_env.achieved_goal_from_state(input_obs)
+                next_goal = py_env.achieved_goal_from_state(target_obs)
+            nonmoving_goal = _fetch_have_goals_nonmoving(next_goal=next_goal, cur_goal= cur_goal)
+
+            target_obs_pred = agent.skill_dynamics.predict_state(timesteps=input_obs, actions=cur_skill)
+            dyn_l2_error_nonmoving_goal.append(l2(target_obs[nonmoving_goal], target_obs_pred[nonmoving_goal]))
+            dyn_l2_error.append(l2(target_obs[~nonmoving_goal], target_obs_pred[~nonmoving_goal]))
 
           if FLAGS.train_skill_dynamics_on_policy:
             buffer.clear()
@@ -1315,7 +1364,8 @@ def main(_):
           tb_log(name='dads/reward', scalar=np.mean(np.concatenate(running_dads_reward)))
           tb_log(name='dads/logp', scalar=np.mean(np.concatenate(running_logp)))
           tb_log(name='dads/logp_altz', scalar=np.mean(np.concatenate(running_logp_altz)))
-          tb_log(name="dads/dynamics-l2-error", scalar=np.mean(dynamics_l2_error))
+          tb_log(name="dads/dynamics-l2-error-moving-goal", scalar=np.mean(dyn_l2_error))
+          tb_log(name="dads/dynamics-l2-error-nonmoving", scalar=np.mean(dyn_l2_error_nonmoving_goal))
 
           if FLAGS.clear_buffer_every_iter:
             raise NotImplementedError
@@ -1333,7 +1383,7 @@ def main(_):
                 vid_name=FLAGS.vid_name,
                 plot_name='traj_plot')
 
-          do_perform_mpc_eval = iter_count > 0 and iter_count % 20 == 0
+          do_perform_mpc_eval = iter_count > 0 and iter_count % 50 == 0
           if do_perform_mpc_eval:
             env = get_environment(env_name=FLAGS.environment + "_goal")
             skill_provider = MPPISkillProvider(env=env, dynamics=agent.skill_dynamics, skills_to_plan=FLAGS.planning_horizon)

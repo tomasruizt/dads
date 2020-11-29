@@ -390,9 +390,6 @@ class SkillDynamics:
     for _ in range(num_steps):
         self._session.run(run_op, feed_dict)
 
-    next_timesteps_pred = self.predict_state(timesteps=timesteps, actions=actions)
-    return {"l2-error": l2(next_timesteps_pred, timesteps)}
-
   def get_log_prob(self, timesteps, actions, next_timesteps):
     if not self._use_placeholders:
       return
