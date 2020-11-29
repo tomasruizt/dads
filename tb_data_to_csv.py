@@ -46,22 +46,25 @@ def get_tb_data(folder: str) -> List:
     return list(summary_iterator(events_fpath))
 
 
+def tag_to_dataframe(tb_data, tagname: str, colname) -> pd.DataFrame:
+    tag_data = list(filter(tag_contains(tagname), tb_data))
+    return pd.DataFrame(dict(
+        ITERATION=map(step, tag_data),
+        MEASUREMENT=colname,
+        VALUE=map(value, tag_data)
+    ))
+
+
 def to_dataframe(tb_data, config: Config) -> pd.DataFrame:
-    pseudoreward_data = list(filter(tag_contains("dads/reward"), tb_data))
-    pseudoreward_df = pd.DataFrame(dict(
-        REWARD_TYPE="PSEUDOREWARD",
-        STEP=map(step, pseudoreward_data),
-        REWARD=map(value, pseudoreward_data)
-    ))
-
-    mpc_data = list(filter(tag_contains("DADS-MPC/rewards"), tb_data))
-    mpc_df = pd.DataFrame(dict(
-        REWARD_TYPE="MPC_REWARD",
-        STEP=map(step, mpc_data),
-        REWARD=map(value, mpc_data)
-    ))
-
-    df = pd.concat((pseudoreward_df, mpc_df))
+    tag_to_colname = [
+        ("dads/reward", "PSEUDOREWARD"),
+        ("DADS-MPC/rewards", "MPC_REWARD"),
+        ("dyn-train-goal-changing-transitions[%]", "TRANSITIONS_MOVING_GOAL[%]"),
+        ("dynamics-l2-error-moving-goal", "DYN_L2_ERROR_MOVING_GOAL"),
+        ("dynamics-l2-error-nonmoving", "DYN_L2_ERROR_NONMOVING_GOAL")
+    ]
+    dfs = [tag_to_dataframe(tb_data, tag, colname) for tag, colname in tag_to_colname]
+    df = pd.concat(dfs)
     df["SEED"] = config.seed
     df["CONTROL_GOAL_SPACE"] = config.use_state_space_reduction
     df["USE_RESAMPLING"] = config.use_resampling_scheme
@@ -69,11 +72,15 @@ def to_dataframe(tb_data, config: Config) -> pd.DataFrame:
 
 
 if __name__ == '__main__':
-    basedir = "results/reach"
+    basedir = "results/push"
+    csv_filename = os.path.join(basedir, "full-results.csv")
+    if os.path.isfile(csv_filename):
+        os.remove(csv_filename)
+
     dfs = []
     for run in os.listdir(basedir):
         df = to_dataframe(tb_data=get_tb_data(folder=os.path.join(basedir, run)),
                           config=get_config(filename=run))
         dfs.append(df)
     full_df = pd.concat(dfs)
-    full_df.to_csv(os.path.join(basedir, "full-results.csv"), index=False)
+    full_df.to_csv(csv_filename, index=False)
