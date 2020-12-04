@@ -55,7 +55,7 @@ class ObsAsOrderedDict(ObservationWrapper):
 
 
 def make_point2d_dads_env(**kwargs):
-    return DADSWrapper(Point2DEnv(), **kwargs)
+    return DADSWrapper(Point2DEnv(use_random_starts=True), **kwargs)
 
 
 def make_fetch_pick_and_place_env(**kwargs):
