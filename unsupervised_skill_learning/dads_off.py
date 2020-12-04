@@ -119,6 +119,7 @@ flags.DEFINE_integer('record_freq', 100,
 flags.DEFINE_integer('run_final_eval', 0, 'Evaluate learnt skills')
 
 # evaluation type
+flags.DEFINE_integer('mpc_eval_freq', sys.maxsize, 'Frequency of MPC evaluation')
 flags.DEFINE_integer('num_evals', 0, 'Number of skills to evaluate')
 flags.DEFINE_integer('deterministic_eval', 0,
                   'Evaluate all skills, only works for discrete skills')
@@ -1400,7 +1401,7 @@ def main(_):
                 vid_name=FLAGS.vid_name,
                 plot_name='traj_plot')
 
-          do_perform_mpc_eval = iter_count > 0 and iter_count % 50 == 0
+          do_perform_mpc_eval = iter_count > 0 and iter_count % FLAGS.mpc_eval_freq == 0
           if do_perform_mpc_eval:
             env = get_environment(env_name=FLAGS.environment + "_goal")
             skill_provider = MPPISkillProvider(env=env, dynamics=agent.skill_dynamics, skills_to_plan=FLAGS.planning_horizon)
