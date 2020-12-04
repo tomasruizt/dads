@@ -24,6 +24,7 @@ import gtimer as gt
 from absl import flags, logging
 
 import sys
+from itertools import product
 
 from tf_agents.trajectories.time_step import TimeStep
 
@@ -814,9 +815,9 @@ class UniformResampler:
         deltas = self._get_dyn_obs_deltas(from_trajectory)
 
         probs = self.tf_session.run(self._estimator.get_input_density(x=deltas))
-        tb_log_fn(name="pre-resampling/min(p)", scalar=np.min(probs))
-        tb_log_fn(name="pre-resampling/max(p)", scalar=np.max(probs))
         tb_log_fn(name="pre-resampling/mean(p)", scalar=np.mean(probs))
+        tb_log_fn(name="pre-resampling/min(p)-mult", scalar=np.min(probs) / np.mean(probs))
+        tb_log_fn(name="pre-resampling/max(p)-mult", scalar=np.max(probs) / np.mean(probs))
 
         importance_sampling_weights = 1 / probs.astype(np.float64)
         resampling_probs = importance_sampling_weights / sum(importance_sampling_weights)
@@ -1519,6 +1520,28 @@ class MPCSkillProvider(SkillProvider):
     def get_skill(self, ts: TimeStep):
         next(self._loop)
         return self._loop.send(ts)
+
+
+class GreedySkillProvider(SkillProvider):
+    def __init__(self, dynamics: SkillDynamics, env: DADSEnv):
+        x = np.linspace(-1.5, 1.5, 50)
+        assert dynamics._action_size == 2, dynamics._action_size
+        self._skills = np.asarray(list(product(x, x)))
+        self._dynamics = dynamics
+        self._env = env
+
+    def start_episode(self):
+        pass
+
+    def get_skill(self, ts: TimeStep) -> np.ndarray:
+        achieved_goal = self._env.achieved_goal_from_state(ts.observation)
+        rewards = self._calc_rewards(achieved_goal)
+        return self._skills[rewards.argmax()]
+
+    def _calc_rewards(self, achieved_goal: np.ndarray) -> np.ndarray:
+        achieved_goals = np.vstack([achieved_goal] * len(self._skills))
+        next_goals_pred = self._dynamics.predict_state(achieved_goals, self._skills)
+        return self._env.compute_reward(achieved_goals, next_goals_pred, info=DADSEnv.OBS_TYPE.DYNAMICS_OBS)
 
 
 def choose_next_skill_loop(dynamics, env: DADSEnv):
