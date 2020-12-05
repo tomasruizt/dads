@@ -21,3 +21,7 @@ her-results/
 debug_reach.py
 run_*.sh
 uncontrolled-metrics/
+MUJOCO_LOG.TXT
+modelsCommandSkills/
+demo*
+replay.sh
