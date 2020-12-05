@@ -1,3 +1,4 @@
+import os
 from typing import Callable, NamedTuple
 
 import gym
@@ -146,9 +147,27 @@ class Conf(NamedTuple):
 
 
 CONFS = dict(
-    reach=Conf(ep_len=50, num_episodes=1000, sample_skills_fn=sample_skill_reach),
+    reach=Conf(ep_len=50, num_episodes=1000, sample_skills_fn=sample_skill_reach, lr=0.001),
     point2d=Conf(ep_len=30, num_episodes=500, sample_skills_fn=sample_skill_point2d, lr=0.001)
 )
+
+
+def show(model, env):
+    while True:
+        d_obs = env.reset()
+        for _ in range(conf.ep_len):
+            env.render("human")
+            action, _ = model.predict(d_obs, deterministic=True)
+            d_obs, *_ = env.step(action)
+
+
+def train(model, conf: Conf, added_trans: int, save_fname: str):
+    kwargs = dict()
+    if added_trans > 0:
+        kwargs["callback"] = AddExpCallback(num_added_samples=added_trans)
+    model.learn(total_timesteps=conf.ep_len * conf.num_episodes, **kwargs)
+    model.save(save_fname)
+
 
 if __name__ == '__main__':
     as_gdads = True
@@ -165,21 +184,15 @@ if __name__ == '__main__':
     else:
         env = for_sac(dads_env_fn(), episode_len=conf.ep_len)
 
-    sac = SAC("MlpPolicy", env=env, verbose=1, learning_rate=conf.lr)
-
-    kwargs = dict()
-    if num_added_transtiions > 0:
-        kwargs["callback"] = AddExpCallback(num_added_samples=num_added_transtiions)
-    sac.learn(total_timesteps=conf.ep_len * conf.num_episodes, **kwargs)
+    filename = f"modelsCommandSkills/{name}-gdads{as_gdads}"
+    if os.path.exists(filename + ".zip"):
+        sac = SAC.load(filename, env=env)
+    else:
+        sac = SAC("MlpPolicy", env=env, verbose=1, learning_rate=conf.lr)
+        train(model=sac, conf=conf, added_trans=num_added_transtiions, save_fname=filename)
 
     if as_gdads:
         eval_dict_env(dict_env=as_dict_env(env=dads_env_fn()),
                       model=GreedySkillPlanner(sac=sac, skill_sampling_fn=conf.sample_skills_fn),
                       ep_len=conf.ep_len)
-
-    while True:
-        d_obs = env.reset()
-        for _ in range(conf.ep_len):
-            env.render("human")
-            action, _ = sac.predict(d_obs, deterministic=True)
-            d_obs, *_ = env.step(action)
+    show(model=sac, env=env)
