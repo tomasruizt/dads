@@ -1,3 +1,4 @@
+import logging
 import os
 import pickle
 import warnings
@@ -25,26 +26,13 @@ from envs.custom_envs import DADSEnv, make_point2d_dads_env, make_fetch_reach_en
 from scipy.stats import multivariate_normal as mvn
 
 
-def sample_2dskills(samples=None):
-    size = (samples, 2) if samples else 2
-    return np.random.normal(size=size)
-
-
-def sample_skill_reach(samples=None):
-    size = (samples, 3) if samples else 3
-    #max_val = 0.035
-    return np.random.normal(size=size)
-
-
 def l2(target, sources: np.ndarray):
     return np.linalg.norm(np.subtract(target, sources), axis=sources.ndim - 1)
 
 
 class SkillWrapper(Wrapper):
-    def __init__(self, env: DADSEnv, skill_reset_steps: int, skill_sampling_fn: Callable,
-                 first_n_goal_dims=None):
+    def __init__(self, env: DADSEnv, skill_reset_steps: int, first_n_goal_dims=None):
         super().__init__(env)
-        self._sample_skill = skill_sampling_fn
         self._skill_reset_steps = skill_reset_steps
         if first_n_goal_dims:
             self._skill_dim = first_n_goal_dims
@@ -55,6 +43,10 @@ class SkillWrapper(Wrapper):
         self._cur_skill = self._sample_skill()
         self._last_flat_obs = None
         self._goal_deltas_stats = [Statistics([1e-6]) for _ in range(self._skill_dim)]
+
+    def _sample_skill(self, samples=None):
+        size = (samples, self._skill_dim) if samples else self._skill_dim
+        return np.random.normal(size=size)
 
     def _normalize(self, delta):
         μs = [s.mean() for s in self._goal_deltas_stats]
@@ -84,7 +76,7 @@ class SkillWrapper(Wrapper):
         log["p(g'|g)"] = np.log(np.mean(normal.pdf(rand_skills)))
         mutual_info = log["p(g'|z,g)"] - log["p(g'|g)"]
         if mutual_info < -0.5:
-            warnings.warn(str((mutual_info, log["p(g'|z,g)"], log["p(g'|g)"])))
+            logging.info(str((mutual_info, log["p(g'|z,g)"], log["p(g'|g)"])))
         return mutual_info
 
     def reset(self, **kwargs):
@@ -176,15 +168,14 @@ envs_fns = dict(
 class Conf(NamedTuple):
     ep_len: int
     num_episodes: int
-    sample_skills_fn: Callable
     lr: float = 3e-4
     first_n_goal_dims: int = None
 
 
 CONFS = dict(
-    reach=Conf(ep_len=50, num_episodes=50, sample_skills_fn=sample_skill_reach, lr=0.001),
-    point2d=Conf(ep_len=30, num_episodes=50, sample_skills_fn=sample_2dskills, lr=0.001),
-    push=Conf(ep_len=50, num_episodes=50, sample_skills_fn=sample_2dskills, first_n_goal_dims=2)
+    reach=Conf(ep_len=50, num_episodes=50, lr=0.001),
+    point2d=Conf(ep_len=30, num_episodes=50, lr=0.001),
+    push=Conf(ep_len=50, num_episodes=2000, first_n_goal_dims=2)
 )
 
 
@@ -207,7 +198,7 @@ def train(model, conf: Conf, added_trans: int, save_fname: str):
 
 if __name__ == '__main__':
     as_gdads = True
-    name = "point2d"
+    name = "reach"
     num_added_transtiions = 0
 
     dads_env_fn = envs_fns[name]
@@ -215,8 +206,7 @@ if __name__ == '__main__':
 
     if as_gdads:
         env = SkillWrapper(TimeLimit(dads_env_fn(), max_episode_steps=conf.ep_len),
-                           skill_reset_steps=5,  #conf.ep_len // 2,
-                           skill_sampling_fn=conf.sample_skills_fn,
+                           skill_reset_steps=10,
                            first_n_goal_dims=conf.first_n_goal_dims)
     else:
         env = for_sac(dads_env_fn(), episode_len=conf.ep_len)
