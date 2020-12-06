@@ -47,6 +47,8 @@ class SkillWrapper(Wrapper):
     def _sample_skill(self, samples=None):
         size = (samples, self._skill_dim) if samples else self._skill_dim
         return np.random.normal(size=size)
+        # skills = np.random.normal(size=size)
+        # return skills / np.linalg.norm(skills, axis=skills.ndim - 1)[None].T
 
     def _normalize(self, delta):
         μs = [s.mean() for s in self._goal_deltas_stats]
@@ -72,11 +74,13 @@ class SkillWrapper(Wrapper):
         normal = mvn(mean=self._cur_skill, cov=1)
         log = dict()
         log["p(g'|z,g)"] = normal.logpdf(x=goal_delta)
+        # log["p(g'|z,g)"] = self._cur_skill @ goal_delta
         rand_skills = self._sample_skill(1000)
-        log["p(g'|g)"] = np.log(np.mean(normal.pdf(rand_skills)))
+        log["p(g'|g)"] = np.log(np.mean(mvn.pdf(rand_skills, mean=goal_delta)))
+        # log["p(g'|g)"] = np.log(np.mean(np.exp(rand_skills @ goal_delta)))
         mutual_info = log["p(g'|z,g)"] - log["p(g'|g)"]
         if mutual_info < -0.5:
-            logging.info(str((mutual_info, log["p(g'|z,g)"], log["p(g'|g)"])))
+            logging.warning(str((mutual_info, log["p(g'|z,g)"], log["p(g'|g)"])))
         return mutual_info
 
     def reset(self, **kwargs):
@@ -96,6 +100,8 @@ class SkillWrapper(Wrapper):
         skills = self._sample_skill(samples=100)
         diffs = l2(delta, skills)
         skill = skills[diffs.argmin()]
+        # similarity = skills @ delta
+        # skill = skills[similarity.argmax()]
         flat_obs_w_skill = np.concatenate((dict_obs["observation"], skill))
         return self._sac.predict(observation=flat_obs_w_skill, deterministic=deterministic)
 
@@ -175,7 +181,7 @@ class Conf(NamedTuple):
 CONFS = dict(
     reach=Conf(ep_len=50, num_episodes=50, lr=0.001),
     point2d=Conf(ep_len=30, num_episodes=50, lr=0.001),
-    push=Conf(ep_len=50, num_episodes=2000, first_n_goal_dims=2)
+    push=Conf(ep_len=50, num_episodes=50, first_n_goal_dims=2, lr=0.001)
 )
 
 
@@ -206,7 +212,7 @@ if __name__ == '__main__':
 
     if as_gdads:
         env = SkillWrapper(TimeLimit(dads_env_fn(), max_episode_steps=conf.ep_len),
-                           skill_reset_steps=10,
+                           skill_reset_steps=5,
                            first_n_goal_dims=conf.first_n_goal_dims)
     else:
         env = for_sac(dads_env_fn(), episode_len=conf.ep_len)
@@ -219,7 +225,7 @@ if __name__ == '__main__':
             env.load(filename)
     else:
         sac = SAC("MlpPolicy", env=env, verbose=1, learning_rate=conf.lr,
-                  tensorboard_log=f"{filename}-tb")
+                  tensorboard_log=f"{filename}-tb", buffer_size=10000)
         train(model=sac, conf=conf, added_trans=num_added_transtiions, save_fname=filename)
         if as_gdads:
             env.save(filename)
