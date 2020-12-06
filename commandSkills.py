@@ -26,14 +26,12 @@ from scipy.stats import multivariate_normal as mvn
 
 def sample_skill_point2d(samples=None):
     size = (samples, 2) if samples else 2
-    #return np.random.uniform(-0.1, 0.1, size=size)
     return np.random.normal(size=size)
 
 
 def sample_skill_reach(samples=None):
     size = (samples, 3) if samples else 3
     #max_val = 0.035
-    #return np.random.uniform(-max_val, max_val, size=size)
     return np.random.normal(size=size)
 
 
@@ -55,7 +53,7 @@ class SkillWrapper(Wrapper):
 
     def _normalize(self, delta):
         μs = [s.mean() for s in self._goal_deltas_stats]
-        σs = [s.stddev() for s in self._goal_deltas_stats]
+        σs = [0.5*max((s.maximum() - μ), μ - s.minimum()) for μ, s in zip(μs, self._goal_deltas_stats)]
         return np.asarray([(d-μ)/σ for (d, μ, σ) in zip(delta, μs, σs)])
 
     def step(self, action):
