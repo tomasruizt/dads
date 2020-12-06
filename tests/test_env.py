@@ -51,7 +51,7 @@ def test_reward_is_convex(env_fn):
     env: DADSEnv = env_fn()
     obs_type = DADSEnv.OBS_TYPE.DYNAMICS_OBS
     obs = np.asarray([_rand_obs(env, obs_type=obs_type) for _ in range(5)])
-    goal = np.vstack([env.goal] * 5)
+    goal = np.vstack([env.get_goal()] * 5)
     reward = partial(env.compute_reward, info=None)
     assert np.all(reward(obs, goal) < reward(_closer(obs, goal), goal))
 
@@ -105,7 +105,7 @@ def _rand_obs(env: DADSEnv, obs_type: DADSEnv.OBS_TYPE):
 def _new_winning_obs(env, obs_type: DADSEnv.OBS_TYPE):
     obs = env.observation_space.sample()
     achieved_goal = env.achieved_goal_from_state(obs)
-    obs[[e in achieved_goal for e in obs]] = env.goal.copy()
+    obs[[e in achieved_goal for e in obs]] = env.get_goal()
     if obs_type == DADSEnv.OBS_TYPE.DYNAMICS_OBS:
         return env.to_dynamics_obs(obs)
     return obs

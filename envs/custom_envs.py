@@ -89,18 +89,7 @@ class CustomFetchPickAndPlaceEnv(FetchPickAndPlaceEnv):
 
 
 class CustomFetchPushEnv(FetchPushEnv):
-    @staticmethod
-    def achieved_goal_from_state(state: np.ndarray) -> np.ndarray:
-        return state[..., 3:5] if _is_batch(state) else state[3:5]
-
-    def _get_obs(self):
-        obs = super()._get_obs()
-        return dict(achieved_goal=obs["achieved_goal"][:2],
-                    desired_goal=obs["desired_goal"][:2],
-                    observation=obs["observation"])
-
-    def _sample_goal(self):
-        return super()._sample_goal()[:2]
+    achieved_goal_from_state = staticmethod(_get_goal_from_state_fetch)
 
 
 class FixedGoalFetchSlideEnv(FetchSlideEnv):
@@ -122,9 +111,10 @@ class DADSCustomFetchReachEnv(FetchReachEnv):
 
 
 class DADSEnv(ABC, GoalEnv):
-    goal: np.ndarray
-
     def dyn_obs_dim(self) -> int:
+        raise NotImplementedError
+
+    def get_goal(self) -> np.ndarray:
         raise NotImplementedError
 
     class OBS_TYPE(Enum):
@@ -157,7 +147,7 @@ class DADSWrapper(Wrapper, DADSEnv):
             achieved_goal = self.env.achieved_goal_from_state(cur_obs)
             next_achieved_goal = self.env.achieved_goal_from_state(next_obs)
 
-        goal = np.broadcast_to(self.goal, achieved_goal.shape)
+        goal = np.broadcast_to(self.get_goal(), achieved_goal.shape)
         reward = lambda achieved: self.env.compute_reward(achieved, goal, info=None)
         return reward(next_achieved_goal) - reward(achieved_goal)
 
@@ -171,3 +161,6 @@ class DADSWrapper(Wrapper, DADSEnv):
 
     def dyn_obs_dim(self):
         return len(self.to_dynamics_obs(self.env.observation_space.sample()))
+
+    def get_goal(self) -> np.ndarray:
+        return self.env.goal.copy()

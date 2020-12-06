@@ -41,14 +41,14 @@ class TimeFeature(ObservationWrapper):
 class ForHER(ObservationWrapper):
     def __init__(self, env):
         super().__init__(env)
-        goal_space = gym.spaces.Box(-np.inf, np.inf, shape=(len(self.env.goal),))
+        goal_space = gym.spaces.Box(-np.inf, np.inf, shape=(len(self.env.get_goal()),))
         self.observation_space = gym.spaces.Dict(spaces=dict(
             achieved_goal=goal_space, desired_goal=goal_space, observation=self.env.observation_space
         ))
 
     def observation(self, observation):
         return OrderedDict(achieved_goal=self.env.achieved_goal_from_state(observation),
-                           desired_goal=self.env.goal.copy(),
+                           desired_goal=self.env.get_goal(),
                            observation=observation)
 
 
