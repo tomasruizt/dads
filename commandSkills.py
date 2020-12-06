@@ -1,13 +1,16 @@
 import os
+import warnings
 from typing import Callable, NamedTuple
 
 import gym
 from gym import Wrapper, GoalEnv
 from gym.wrappers import FlattenObservation, TimeLimit
+from runstats import Statistics
 from stable_baselines3 import SAC
 import numpy as np
 from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.monitor import Monitor
 
 from solvability import ForHER
 
@@ -16,18 +19,22 @@ matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 plt.ion()
 
-from envs.custom_envs import DADSEnv, make_point2d_dads_env, make_fetch_reach_env
+from envs.custom_envs import DADSEnv, make_point2d_dads_env, make_fetch_reach_env, \
+    make_fetch_push_env
+from scipy.stats import multivariate_normal as mvn
 
 
 def sample_skill_point2d(samples=None):
     size = (samples, 2) if samples else 2
-    return np.random.uniform(-0.1, 0.1, size=size)
+    #return np.random.uniform(-0.1, 0.1, size=size)
+    return np.random.normal(size=size)
 
 
 def sample_skill_reach(samples=None):
     size = (samples, 3) if samples else 3
-    max_val = 0.035
-    return np.random.uniform(-max_val, max_val, size=size)
+    #max_val = 0.035
+    #return np.random.uniform(-max_val, max_val, size=size)
+    return np.random.normal(size=size)
 
 
 def l2(target, sources: np.ndarray):
@@ -44,6 +51,12 @@ class SkillWrapper(Wrapper):
         self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(obs_dim, ))
         self._cur_skill = self._sample_skill()
         self._last_flat_obs = None
+        self._goal_deltas_stats = [Statistics([1e-6]) for _ in range(skill_dim)]
+
+    def _normalize(self, delta):
+        μs = [s.mean() for s in self._goal_deltas_stats]
+        σs = [s.stddev() for s in self._goal_deltas_stats]
+        return np.asarray([(d-μ)/σ for (d, μ, σ) in zip(delta, μs, σs)])
 
     def step(self, action):
         flat_obs, _, done, info = self.env.step(action)
@@ -57,8 +70,18 @@ class SkillWrapper(Wrapper):
     def _reward(self, flat_obs: np.ndarray) -> float:
         last_achieved_goal = self.env.achieved_goal_from_state(self._last_flat_obs)
         achieved_goal = self.env.achieved_goal_from_state(flat_obs)
-        goal_delta = achieved_goal - last_achieved_goal
-        return -l2(target=goal_delta, sources=self._cur_skill)
+        for s, d in zip(self._goal_deltas_stats, achieved_goal - last_achieved_goal):
+            s.push(d)
+        goal_delta = self._normalize(achieved_goal - last_achieved_goal)
+        normal = mvn(mean=self._cur_skill, cov=1)
+        log = dict()
+        log["p(g'|z,g)"] = normal.logpdf(x=goal_delta)
+        rand_skills = self._sample_skill(1000)
+        log["p(g'|g)"] = np.log(np.mean(normal.pdf(rand_skills)))
+        mutual_info = log["p(g'|z,g)"] - log["p(g'|g)"]
+        if mutual_info < -0.5:
+            warnings.warn(str((mutual_info, log["p(g'|z,g)"], log["p(g'|g)"])))
+        return mutual_info
 
     def reset(self, **kwargs):
         self._cur_skill = self._sample_skill()
@@ -68,16 +91,13 @@ class SkillWrapper(Wrapper):
     def _add_skill(self, flat_obs: np.ndarray) -> np.ndarray:
         return np.concatenate((flat_obs, self._cur_skill))
 
-
-class GreedySkillPlanner:
-    def __init__(self, sac: SAC, skill_sampling_fn: Callable):
+    def set_sac(self, sac):
         self._sac = sac
-        self._sample_skills = skill_sampling_fn
 
     def predict(self, dict_obs: dict, deterministic=True):
-        delta = dict_obs["desired_goal"] - dict_obs["achieved_goal"]
-        skills = self._sample_skills(samples=100)
-        diffs = l2(target=delta, sources=skills)
+        delta = self._normalize(dict_obs["desired_goal"] - dict_obs["achieved_goal"])
+        skills = self._sample_skill(samples=100)
+        diffs = l2(delta, skills)
         skill = skills[diffs.argmin()]
         flat_obs_w_skill = np.concatenate((dict_obs["observation"], skill))
         return self._sac.predict(observation=flat_obs_w_skill, deterministic=deterministic)
@@ -135,7 +155,8 @@ class AddExpCallback(BaseCallback):
 
 envs_fns = dict(
     point2d=make_point2d_dads_env,
-    reach=make_fetch_reach_env
+    reach=make_fetch_reach_env,
+    push=make_fetch_push_env
 )
 
 
@@ -147,8 +168,9 @@ class Conf(NamedTuple):
 
 
 CONFS = dict(
-    reach=Conf(ep_len=50, num_episodes=1000, sample_skills_fn=sample_skill_reach, lr=0.001),
-    point2d=Conf(ep_len=30, num_episodes=500, sample_skills_fn=sample_skill_point2d, lr=0.001)
+    reach=Conf(ep_len=50, num_episodes=50, sample_skills_fn=sample_skill_reach, lr=0.001),
+    point2d=Conf(ep_len=30, num_episodes=50, sample_skills_fn=sample_skill_point2d, lr=0.001),
+    push=Conf(ep_len=50, num_episodes=1000, sample_skills_fn=sample_skill_reach)
 )
 
 
@@ -171,7 +193,7 @@ def train(model, conf: Conf, added_trans: int, save_fname: str):
 
 if __name__ == '__main__':
     as_gdads = True
-    name = "reach"
+    name = "push"
     num_added_transtiions = 0
 
     dads_env_fn = envs_fns[name]
@@ -179,20 +201,23 @@ if __name__ == '__main__':
 
     if as_gdads:
         env = SkillWrapper(TimeLimit(dads_env_fn(), max_episode_steps=conf.ep_len),
-                           skill_reset_steps=conf.ep_len // 2,
+                           skill_reset_steps=5, #conf.ep_len // 2,
                            skill_sampling_fn=conf.sample_skills_fn)
     else:
         env = for_sac(dads_env_fn(), episode_len=conf.ep_len)
+    env = Monitor(env)
 
     filename = f"modelsCommandSkills/{name}-gdads{as_gdads}"
     if os.path.exists(filename + ".zip"):
         sac = SAC.load(filename, env=env)
     else:
-        sac = SAC("MlpPolicy", env=env, verbose=1, learning_rate=conf.lr)
+        sac = SAC("MlpPolicy", env=env, verbose=1, learning_rate=conf.lr,
+                  tensorboard_log=f"{filename}-tb")
         train(model=sac, conf=conf, added_trans=num_added_transtiions, save_fname=filename)
 
     if as_gdads:
+        env.set_sac(sac)
         eval_dict_env(dict_env=as_dict_env(env=dads_env_fn()),
-                      model=GreedySkillPlanner(sac=sac, skill_sampling_fn=conf.sample_skills_fn),
+                      model=env,
                       ep_len=conf.ep_len)
     show(model=sac, env=env)
