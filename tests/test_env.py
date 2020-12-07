@@ -5,7 +5,8 @@ import numpy as np
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
     CustomFetchPickAndPlaceEnv, FixedGoalFetchSlideEnv, make_point2d_dads_env, \
     DADSCustomFetchReachEnv, make_fetch_reach_env, make_toylab_dads_env, DADSEnv, \
-    make_fetch_push_env, CustomFetchPushEnv
+    make_fetch_push_env, CustomFetchPushEnv, make_point_mass_env
+from envs.gym_mujoco.point_mass import PointMassGoalEnv
 
 convex_envs_fns = [
     make_fetch_reach_env,
@@ -13,6 +14,7 @@ convex_envs_fns = [
     make_fetch_push_env,
     make_fetch_slide_env,
     make_point2d_dads_env,
+    make_point_mass_env
 ]
 
 envs_fns = [
@@ -20,11 +22,12 @@ envs_fns = [
     make_toylab_dads_env
 ]
 
-fetch_env_ctors = [
+achieved_goal_in_observation_env_ctors = [
     CustomFetchPickAndPlaceEnv,
     CustomFetchPushEnv,
     FixedGoalFetchSlideEnv,
-    DADSCustomFetchReachEnv
+    DADSCustomFetchReachEnv,
+    PointMassGoalEnv
 ]
 
 VECTORIZED_DIM = 50  # dim to test vectorized funcs
@@ -123,7 +126,7 @@ def test_to_dynamics_obs_fn(env_fn, use_state_space_reduction: bool):
         assert np.allclose(obs, env.to_dynamics_obs(obs))
 
 
-@pytest.mark.parametrize("env_ctor", fetch_env_ctors)
+@pytest.mark.parametrize("env_ctor", achieved_goal_in_observation_env_ctors)
 def test_goal_pos(env_ctor):
     env = env_ctor()
     obs = env.reset()

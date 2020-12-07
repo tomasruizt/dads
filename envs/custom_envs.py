@@ -12,6 +12,7 @@ from gym.envs.robotics import FetchPickAndPlaceEnv, FetchSlideEnv, FetchEnv, Fet
 from gym.wrappers import FilterObservation, FlattenObservation
 from multi_goal.envs.toy_labyrinth_env import ToyLab
 
+from envs.gym_mujoco.point_mass import PointMassGoalEnv
 from envs.point2d_env import Point2DEnv
 
 
@@ -58,23 +59,27 @@ def make_point2d_dads_env(**kwargs):
     return DADSWrapper(Point2DEnv(use_random_starts=True), **kwargs)
 
 
+def make_point_mass_env(**kwargs):
+    return _process_goalenv(PointMassGoalEnv(), **kwargs)
+
+
 def make_fetch_pick_and_place_env(**kwargs):
-    return _process_fetch_env(CustomFetchPickAndPlaceEnv(reward_type="dense"), **kwargs)
+    return _process_goalenv(CustomFetchPickAndPlaceEnv(reward_type="dense"), **kwargs)
 
 
 def make_fetch_slide_env(**kwargs):
-    return _process_fetch_env(FixedGoalFetchSlideEnv(reward_type="dense"), **kwargs)
+    return _process_goalenv(FixedGoalFetchSlideEnv(reward_type="dense"), **kwargs)
 
 
 def make_fetch_push_env(**kwargs):
-    return _process_fetch_env(CustomFetchPushEnv(reward_type="dense"), **kwargs)
+    return _process_goalenv(CustomFetchPushEnv(reward_type="dense"), **kwargs)
 
 
 def make_fetch_reach_env(**kwargs):
-    return _process_fetch_env(DADSCustomFetchReachEnv(reward_type="dense"), **kwargs)
+    return _process_goalenv(DADSCustomFetchReachEnv(reward_type="dense"), **kwargs)
 
 
-def _process_fetch_env(env: FetchEnv, **kwargs):
+def _process_goalenv(env: GoalEnv, **kwargs):
     env = FilterObservation(env, filter_keys=["observation"])
     env = FlattenObservation(env)
     return DADSWrapper(env, **kwargs)
