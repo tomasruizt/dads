@@ -61,7 +61,8 @@ def to_dataframe(tb_data, config: Config) -> pd.DataFrame:
         ("DADS-MPC/rewards", "MPC_REWARD"),
         ("dyn-train-goal-changing-transitions[%]", "TRANSITIONS_MOVING_GOAL[%]"),
         ("dynamics-l2-error-moving-goal", "DYN_L2_ERROR_MOVING_GOAL"),
-        ("dynamics-l2-error-nonmoving", "DYN_L2_ERROR_NONMOVING_GOAL")
+        ("dynamics-l2-error-nonmoving", "DYN_L2_ERROR_NONMOVING_GOAL"),
+        ("DADS-MPC/is-success", "IS_SUCCESS")
     ]
     dfs = [tag_to_dataframe(tb_data, tag, colname) for tag, colname in tag_to_colname]
     df = pd.concat(dfs)
@@ -72,7 +73,7 @@ def to_dataframe(tb_data, config: Config) -> pd.DataFrame:
 
 
 if __name__ == '__main__':
-    basedir = "results/push"
+    basedir = "results/reach"
     csv_filename = os.path.join(basedir, "full-results.csv")
     if os.path.isfile(csv_filename):
         os.remove(csv_filename)
