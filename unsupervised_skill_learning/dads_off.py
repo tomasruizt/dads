@@ -96,7 +96,7 @@ flags.DEFINE_integer('max_env_steps', 200,
 flags.DEFINE_integer('max_env_steps_eval', 200, 'Steps per episode when evaluating')
 flags.DEFINE_integer('reduced_observation_size', 0,
                      'Predict dynamics in a reduced observation space')
-flags.DEFINE_boolean('use_state_space_reduction', True,
+flags.DEFINE_boolean('use_state_space_reduction', False,
                      "Reduce the state space to the goal space in the mutual information objective")
 flags.DEFINE_integer(
     'min_steps_before_resample', 50,
@@ -1418,6 +1418,8 @@ def main(_):
             tb_log("DADS-MPC/dynamics-l2-error", dyn_l2_error)
             tb_log("DADS-MPC/goal-l2-error", calc_goal_l2(env=env, steps=steps))
             tb_log("DADS-MPC/rewards", np.mean([s.ts_p1.reward for s in steps]))
+            infos = np.asarray([ep[-1].info for ep in grouper(FLAGS.max_env_steps_eval, steps)])
+            tb_log("DADS-MPC/is-success", np.mean([i["is_success"] for i in infos]))
           gt.stamp("eval")
 
         py_env.close()

@@ -179,6 +179,7 @@ class DADSStep(NamedTuple):
     skill: np.ndarray
     ts_p1: TimeStep
     goal: np.ndarray
+    info: dict
 
 
 def evaluate_skill_provider_loop(
@@ -199,7 +200,7 @@ def evaluate_skill_provider_loop(
             timestep_pskill: TimeStep = timestep._replace(observation=np.concatenate((timestep.observation, skill)))
             action = clip_action_fn(policy.action_mean(hide_coords_fn(timestep_pskill)))
             next_timestep = env.step(action)
-            yield DADSStep(ts=timestep, skill=skill, ts_p1=next_timestep, goal=env.get_goal())
+            yield DADSStep(ts=timestep, skill=skill, ts_p1=next_timestep, goal=env.get_goal(), info=env.get_info())
             timestep = next_timestep
             if render_env:
                 env.render("human")
