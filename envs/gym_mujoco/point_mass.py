@@ -16,13 +16,13 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import gym
 import math
 import os
-from gym import utils, ObservationWrapper, GoalEnv
+from gym import utils, GoalEnv
 import numpy as np
 from gym.envs.mujoco import mujoco_env
-from multi_goal.utils import get_updateable_scatter
+from envs.gym_mujoco.custom_wrappers import DictInfoWrapper, PlotGoalWrapper, DenseGoalWrapper
+
 
 # pylint: disable=missing-docstring
 class PointMassEnv(mujoco_env.MujocoEnv, utils.EzPickle):
@@ -113,47 +113,23 @@ def sample_2d_goal(_):
     return np.random.uniform(-2, 2, size=2)
 
 
-class PointMassGoalEnv(ObservationWrapper, GoalEnv):
+def PointMassGoalEnv() -> GoalEnv:
+    env = PointMassAsGoalEnv()
+    env = PlotGoalWrapper(env, goal_limit=2)
+    env = DenseGoalWrapper(env)
+    return DictInfoWrapper(env)
+
+
+class PointMassAsGoalEnv(PointMassEnv):
     def __init__(self):
-        env = PointMassEnv(expose_velocity=True, expose_goal=True, target=sample_2d_goal)
-        super().__init__(env)
-        goal_space = gym.spaces.Box(-np.inf, np.inf, shape=(2,))
-        self.observation_space = gym.spaces.Dict(spaces=dict(
-            achieved_goal=goal_space, desired_goal=goal_space,
-            observation=gym.spaces.Box(-np.inf, np.inf, shape=(8,))))
-        self._plot = None
+        super().__init__(expose_velocity=True, expose_goal=False, target=sample_2d_goal)
 
-    def step(self, action):
-        observation, reward, done, _ = super().step(action)
-        return observation, reward, done, dict()
-
-    def observation(self, observation):
-        assert len(observation) == 8, observation
-        return dict(achieved_goal=observation[:2],
-                    desired_goal=observation[-2:],
-                    observation=observation)
-
-    def render(self, mode='human', **kwargs):
-        super().render(mode=mode, **kwargs)
-        if self._plot is None:
-            self._plot = get_updateable_scatter()
-            self._plot[1].plot([-2, 2, 2, -2, -2], [-2, -2, 2, 2, -2])
-            self._plot[1].set_xlim((-2.2, 2.2))
-            self._plot[1].set_ylim((-2.2, 2.2))
-        fig, ax, scatter = self._plot
-        scatter(name="achieved_goal", pts=self.env._get_obs()[:2])
-        scatter(name="desired_goal", pts=self.env.goal)
-        fig.canvas.draw()
-        fig.canvas.flush_events()
-
-    def compute_reward(self, achieved_goal, desired_goal, info):
-        return -np.linalg.norm(np.subtract(achieved_goal, desired_goal), axis=achieved_goal.ndim - 1)**2
-
-    @staticmethod
-    def achieved_goal_from_state(state: np.ndarray) -> np.ndarray:
-        assert state.ndim <= 2, state.ndim
-        is_batch = state.ndim == 2
-        return state[..., :2] if is_batch else state[:2]
+    def _get_obs(self):
+        obs = super()._get_obs().astype(np.float32)
+        assert len(obs) == 6, obs
+        return dict(achieved_goal=obs[:2],
+                    desired_goal=self.goal.astype(np.float32),
+                    observation=obs)
 
 
 if __name__ == '__main__':

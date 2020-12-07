@@ -12,6 +12,7 @@ from gym.envs.robotics import FetchPickAndPlaceEnv, FetchSlideEnv, FetchEnv, Fet
 from gym.wrappers import FilterObservation, FlattenObservation
 from multi_goal.envs.toy_labyrinth_env import ToyLab
 
+from envs.gym_mujoco.ant import AntGoalEnv
 from envs.gym_mujoco.point_mass import PointMassGoalEnv
 from envs.point2d_env import Point2DEnv
 
@@ -61,6 +62,10 @@ def make_point2d_dads_env(**kwargs):
 
 def make_point_mass_env(**kwargs):
     return _process_goalenv(PointMassGoalEnv(), **kwargs)
+
+
+def make_ant_dads_env(**kwargs):
+    return _process_goalenv(AntGoalEnv(), **kwargs)
 
 
 def make_fetch_pick_and_place_env(**kwargs):

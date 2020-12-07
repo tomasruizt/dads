@@ -18,9 +18,12 @@ from __future__ import print_function
 
 import os
 
-from gym import utils
+from gym import utils, GoalEnv
 import numpy as np
 from gym.envs.mujoco import mujoco_env
+
+from envs.gym_mujoco.custom_wrappers import PlotGoalWrapper, DenseGoalWrapper, DictInfoWrapper
+
 
 def q_inv(a):
   return [a[0], -a[1], -a[2], -a[3]]
@@ -185,3 +188,43 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
   @property
   def body_comvel_indices(self):
     return self._body_comvel_indices
+
+
+class AntAsGoalEnv(AntEnv):
+    def __init__(self, limits: float):
+        goal = np.random.uniform(-limits, limits, size=2)
+        super().__init__(task="goal", expose_all_qpos=True, goal=goal)
+        self._limits = limits
+
+    def _get_obs(self):
+        obs = super()._get_obs().astype(np.float32)
+        return dict(achieved_goal=obs[:2],
+                    desired_goal=self._goal.astype(np.float32),
+                    observation=obs)
+
+    def reset(self):
+        self._goal = np.random.uniform(-self._limits, self._limits, size=2)
+        return super().reset()
+
+    @property
+    def goal(self):
+        return self._goal
+
+
+def AntGoalEnv() -> GoalEnv:
+    limits = 3
+    env = AntAsGoalEnv(limits=limits)
+    env = PlotGoalWrapper(env, goal_limit=limits)
+    env = DenseGoalWrapper(env)
+    return DictInfoWrapper(env)
+
+
+if __name__ == '__main__':
+    env = AntGoalEnv()
+    print(env.action_space)
+    print(env.observation_space)
+    while True:
+        env.reset()
+        for _ in range(100):
+            env.render("human")
+            env.step(env.action_space.sample())
