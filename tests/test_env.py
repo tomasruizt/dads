@@ -44,7 +44,8 @@ def test_env_trajectories_not_done(env_fn):
         obs = env.reset()
         assert len(obs) == env.observation_space.shape[0]
         for _ in range(10):
-            env.step(env.action_space.sample())
+            info = env.step(env.action_space.sample())[-1]
+    assert isinstance(info, dict)
 
     dones = [env.step(env.action_space.sample())[2] for _ in range(150)]
     assert len(dones) > 0 and not any(dones)

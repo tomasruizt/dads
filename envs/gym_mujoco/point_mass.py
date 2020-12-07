@@ -19,7 +19,6 @@ from __future__ import print_function
 import gym
 import math
 import os
-
 from gym import utils, ObservationWrapper, GoalEnv
 import numpy as np
 from gym.envs.mujoco import mujoco_env
@@ -111,7 +110,7 @@ class PointMassEnv(mujoco_env.MujocoEnv, utils.EzPickle):
 
 
 def sample_2d_goal(_):
-    return np.random.uniform(-10, 10, size=2)
+    return np.random.uniform(-2, 2, size=2)
 
 
 class PointMassGoalEnv(ObservationWrapper, GoalEnv):
@@ -124,6 +123,10 @@ class PointMassGoalEnv(ObservationWrapper, GoalEnv):
             observation=gym.spaces.Box(-np.inf, np.inf, shape=(8,))))
         self._plot = None
 
+    def step(self, action):
+        observation, reward, done, _ = super().step(action)
+        return observation, reward, done, dict()
+
     def observation(self, observation):
         assert len(observation) == 8, observation
         return dict(achieved_goal=observation[:2],
@@ -134,8 +137,9 @@ class PointMassGoalEnv(ObservationWrapper, GoalEnv):
         super().render(mode=mode, **kwargs)
         if self._plot is None:
             self._plot = get_updateable_scatter()
-            self._plot[1].set_xlim((-10, 10))
-            self._plot[1].set_ylim((-10, 10))
+            self._plot[1].plot([-2, 2, 2, -2, -2], [-2, -2, 2, 2, -2])
+            self._plot[1].set_xlim((-2.2, 2.2))
+            self._plot[1].set_ylim((-2.2, 2.2))
         fig, ax, scatter = self._plot
         scatter(name="achieved_goal", pts=self.env._get_obs()[:2])
         scatter(name="desired_goal", pts=self.env.goal)
@@ -158,6 +162,7 @@ if __name__ == '__main__':
     print(env.observation_space)
     while True:
         obs = env.reset()
-        for _ in range(50):
+        while True:
             env.render("human")
-            obs = env.step(env.action_space.sample())
+            action = env.action_space.sample()
+            obs = env.step(action)
