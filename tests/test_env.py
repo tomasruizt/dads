@@ -38,10 +38,11 @@ def env_fn(request):
     yield request.param
 
 
-def test_env_trajectories_dont_env(env_fn):
+def test_env_trajectories_not_done(env_fn):
     env = env_fn()
     for _ in range(3):
-        env.reset()
+        obs = env.reset()
+        assert len(obs) == env.observation_space.shape[0]
         for _ in range(10):
             env.step(env.action_space.sample())
 

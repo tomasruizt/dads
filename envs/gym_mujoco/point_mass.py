@@ -128,7 +128,7 @@ class PointMassGoalEnv(ObservationWrapper, GoalEnv):
         assert len(observation) == 8, observation
         return dict(achieved_goal=observation[:2],
                     desired_goal=observation[-2:],
-                    observation=observation[:6])
+                    observation=observation)
 
     def render(self, mode='human', **kwargs):
         super().render(mode=mode, **kwargs)
