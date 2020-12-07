@@ -30,6 +30,70 @@ def l2(target, sources: np.ndarray):
     return np.linalg.norm(np.subtract(target, sources), axis=sources.ndim - 1)
 
 
+class MutualInfoStrategy:
+    def __init__(self, skill_dim: int):
+        self._skill_dim = skill_dim
+
+    def sample_skill(self, samples=None):
+        size = (samples, self._skill_dim) if samples else self._skill_dim
+        return np.random.normal(size=size)
+
+    def get_mutual_info(self, goal_delta: np.ndarray, skill: np.ndarray) -> float:
+        log = dict()
+        log["p(g'|z,g)"] = self._mi_numerator(delta=goal_delta, skill=skill)
+        rand_skills = self.sample_skill(1000)
+        log["p(g'|g)"] = self._mi_denominator(delta=goal_delta, skills=rand_skills)
+        mutual_info = log["p(g'|z,g)"] - log["p(g'|g)"]
+        if mutual_info < -0.5:
+            logging.warning(str((mutual_info, log["p(g'|z,g)"], log["p(g'|g)"])))
+        return mutual_info
+
+    def choose_skill(self, desired_delta: np.ndarray) -> np.ndarray:
+        raise NotImplementedError
+
+    @staticmethod
+    def _mi_numerator(delta: np.ndarray, skill: np.ndarray) -> float:
+        raise NotImplementedError
+
+    @staticmethod
+    def _mi_denominator(delta: np.ndarray, skills: np.ndarray) -> float:
+        raise NotImplementedError
+
+
+class DotProductStrategy(MutualInfoStrategy):
+    def sample_skill(self, samples=None):
+        skills = super().sample_skill(samples)
+        return skills / np.linalg.norm(skills, axis=skills.ndim - 1)[None].T
+
+    @staticmethod
+    def _mi_numerator(delta: np.ndarray, skill: np.ndarray) -> float:
+        return skill @ delta - np.linalg.norm(delta)
+
+    @staticmethod
+    def _mi_denominator(delta: np.ndarray, skills: np.ndarray) -> float:
+        return np.log(np.mean(np.exp(skills @ delta - np.linalg.norm(delta))))
+
+    def choose_skill(self, desired_delta: np.ndarray) -> np.ndarray:
+        skills = self.sample_skill(samples=100)
+        similarity = skills @ desired_delta
+        return skills[similarity.argmax()]
+
+
+class MVNStrategy(MutualInfoStrategy):
+    def choose_skill(self, desired_delta: np.ndarray) -> np.ndarray:
+        skills = self.sample_skill(samples=100)
+        diffs = l2(desired_delta, skills)
+        return skills[diffs.argmin()]
+
+    @staticmethod
+    def _mi_numerator(delta: np.ndarray, skill: np.ndarray) -> float:
+        return mvn.logpdf(x=delta, mean=skill)
+
+    @staticmethod
+    def _mi_denominator(delta: np.ndarray, skills: np.ndarray) -> float:
+        return np.log(np.mean(mvn.pdf(skills, mean=delta)))
+
+
 class SkillWrapper(Wrapper):
     def __init__(self, env: DADSEnv, skill_reset_steps: int, first_n_goal_dims=None):
         super().__init__(env)
@@ -40,19 +104,15 @@ class SkillWrapper(Wrapper):
             self._skill_dim = len(self.env.achieved_goal_from_state(self.env.observation_space.sample()))
         obs_dim = self.env.observation_space.shape[0] + self._skill_dim
         self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(obs_dim, ))
-        self._cur_skill = self._sample_skill()
+        self._sim = MVNStrategy(skill_dim=self._skill_dim)
+        self._cur_skill = self._sim.sample_skill()
         self._last_flat_obs = None
         self._goal_deltas_stats = [Statistics([1e-6]) for _ in range(self._skill_dim)]
 
-    def _sample_skill(self, samples=None):
-        size = (samples, self._skill_dim) if samples else self._skill_dim
-        return np.random.normal(size=size)
-        # skills = np.random.normal(size=size)
-        # return skills / np.linalg.norm(skills, axis=skills.ndim - 1)[None].T
-
     def _normalize(self, delta):
         μs = [s.mean() for s in self._goal_deltas_stats]
-        σs = [0.5*max((s.maximum() - μ), μ - s.minimum()) for μ, s in zip(μs, self._goal_deltas_stats)]
+        σs = [s.stddev() for s in self._goal_deltas_stats]
+        # σs = [0.5*max((s.maximum() - μ), μ - s.minimum()) for μ, s in zip(μs, self._goal_deltas_stats)]
         return np.asarray([(d-μ)/σ for (d, μ, σ) in zip(delta, μs, σs)])
 
     def step(self, action):
@@ -60,7 +120,7 @@ class SkillWrapper(Wrapper):
         reward = self._reward(flat_obs)
         self._last_flat_obs = flat_obs
         if np.random.random() < 1/self._skill_reset_steps:
-            self._cur_skill = self._sample_skill()
+            self._cur_skill = self._sim.sample_skill()
         flat_obs_w_skill = self._add_skill(self._last_flat_obs)
         return flat_obs_w_skill, reward, done, info
 
@@ -70,21 +130,11 @@ class SkillWrapper(Wrapper):
         goal_delta = (achieved_goal - last_achieved_goal)[:self._skill_dim]
         for s, d in zip(self._goal_deltas_stats, goal_delta):
             s.push(d)
-        goal_delta = self._normalize(goal_delta)
-        normal = mvn(mean=self._cur_skill, cov=1)
-        log = dict()
-        log["p(g'|z,g)"] = normal.logpdf(x=goal_delta)
-        # log["p(g'|z,g)"] = self._cur_skill @ goal_delta
-        rand_skills = self._sample_skill(1000)
-        log["p(g'|g)"] = np.log(np.mean(mvn.pdf(rand_skills, mean=goal_delta)))
-        # log["p(g'|g)"] = np.log(np.mean(np.exp(rand_skills @ goal_delta)))
-        mutual_info = log["p(g'|z,g)"] - log["p(g'|g)"]
-        if mutual_info < -0.5:
-            logging.warning(str((mutual_info, log["p(g'|z,g)"], log["p(g'|g)"])))
-        return mutual_info
+        return self._sim.get_mutual_info(goal_delta=self._normalize(goal_delta),
+                                         skill=self._cur_skill)
 
     def reset(self, **kwargs):
-        self._cur_skill = self._sample_skill()
+        self._cur_skill = self._sim.sample_skill()
         self._last_flat_obs = self.env.reset(**kwargs)
         return self._add_skill(self._last_flat_obs)
 
@@ -96,12 +146,7 @@ class SkillWrapper(Wrapper):
 
     def predict(self, dict_obs: dict, deterministic=True):
         delta = (dict_obs["desired_goal"] - dict_obs["achieved_goal"])[:self._skill_dim]
-        delta = self._normalize(delta)
-        skills = self._sample_skill(samples=100)
-        diffs = l2(delta, skills)
-        skill = skills[diffs.argmin()]
-        # similarity = skills @ delta
-        # skill = skills[similarity.argmax()]
+        skill = self._sim.choose_skill(desired_delta=self._normalize(delta))
         flat_obs_w_skill = np.concatenate((dict_obs["observation"], skill))
         return self._sac.predict(observation=flat_obs_w_skill, deterministic=deterministic)
 
@@ -178,13 +223,6 @@ class Conf(NamedTuple):
     first_n_goal_dims: int = None
 
 
-CONFS = dict(
-    reach=Conf(ep_len=50, num_episodes=50, lr=0.001),
-    point2d=Conf(ep_len=30, num_episodes=50, lr=0.001),
-    push=Conf(ep_len=50, num_episodes=50, first_n_goal_dims=2, lr=0.001)
-)
-
-
 def show(model, env):
     while True:
         d_obs = env.reset()
@@ -201,6 +239,12 @@ def train(model, conf: Conf, added_trans: int, save_fname: str):
     model.learn(total_timesteps=conf.ep_len * conf.num_episodes, **kwargs)
     model.save(save_fname)
 
+
+CONFS = dict(
+    reach=Conf(ep_len=50, num_episodes=50, lr=0.001),
+    point2d=Conf(ep_len=30, num_episodes=50, lr=0.001),
+    push=Conf(ep_len=50, num_episodes=2000, first_n_goal_dims=2)
+)
 
 if __name__ == '__main__':
     as_gdads = True
