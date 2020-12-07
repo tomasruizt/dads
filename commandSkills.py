@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 plt.ion()
 
 from envs.custom_envs import DADSEnv, make_point2d_dads_env, make_fetch_reach_env, \
-    make_fetch_push_env
+    make_fetch_push_env, make_point_mass_env
 from scipy.stats import multivariate_normal as mvn
 
 
@@ -212,7 +212,8 @@ class AddExpCallback(BaseCallback):
 envs_fns = dict(
     point2d=make_point2d_dads_env,
     reach=make_fetch_reach_env,
-    push=make_fetch_push_env
+    push=make_fetch_push_env,
+    pointmass=make_point_mass_env
 )
 
 
@@ -243,12 +244,13 @@ def train(model, conf: Conf, added_trans: int, save_fname: str):
 CONFS = dict(
     reach=Conf(ep_len=50, num_episodes=50, lr=0.001),
     point2d=Conf(ep_len=30, num_episodes=50, lr=0.001),
-    push=Conf(ep_len=50, num_episodes=2000, first_n_goal_dims=2)
+    push=Conf(ep_len=50, num_episodes=2000, first_n_goal_dims=2),
+    pointmass=Conf(ep_len=50, num_episodes=500)
 )
 
 if __name__ == '__main__':
     as_gdads = True
-    name = "reach"
+    name = "pointmass"
     num_added_transtiions = 0
 
     dads_env_fn = envs_fns[name]
@@ -256,7 +258,7 @@ if __name__ == '__main__':
 
     if as_gdads:
         env = SkillWrapper(TimeLimit(dads_env_fn(), max_episode_steps=conf.ep_len),
-                           skill_reset_steps=5,
+                           skill_reset_steps=conf.ep_len // 2,
                            first_n_goal_dims=conf.first_n_goal_dims)
     else:
         env = for_sac(dads_env_fn(), episode_len=conf.ep_len)
