@@ -971,6 +971,16 @@ def enter_test_mpc_control_mode():
             ts = env.step(action)
 
 
+def register_reward(reward_of: dict, env, trajectory, dads_reward):
+    cur_obs = trajectory.observation[:, 0, :]
+    cur_goal = env.achieved_goal_from_state(cur_obs)
+    next_obs = trajectory.observation[:, 1, :]
+    next_goal = env.achieved_goal_from_state(next_obs)
+    nonmoving = _fetch_have_goals_nonmoving(next_goal, cur_goal)
+    reward_of["moving"].append(np.mean(dads_reward[~nonmoving]))
+    reward_of["nonmoving"].append(np.mean(dads_reward[nonmoving]))
+
+
 def main(_):
   logging.info(f"########### USE RESAMPLING SCHEME: {FLAGS.use_dynamics_uniform_resampling}")
   logging.info(f"########### USE STATE SPACE REDUCTION: {FLAGS.use_state_space_reduction}")
@@ -1327,6 +1337,7 @@ def main(_):
           gt.stamp("[dyn]train")
 
           running_dads_reward, running_logp, running_logp_altz = [], [], []
+          reward_of = dict(moving=[], nonmoving=[])
 
           # AGENT TRAINING
           # agent train loop analysis
@@ -1362,6 +1373,7 @@ def main(_):
               running_dads_reward.append(dads_reward)
               running_logp.append(info['logp'])
               running_logp_altz.append(info['logp_altz'])
+              register_reward(reward_of=reward_of, env=py_env,trajectory=trajectory_sample, dads_reward=dads_reward)
 
           def tb_log(name: str, scalar):
               tensorboard_log_scalar(name=name, scalar=scalar, tb_writer=train_writer, step_num=iter_count)
@@ -1380,6 +1392,8 @@ def main(_):
                     sess.run(all_histograms)
 
           tb_log(name='dads/reward', scalar=np.mean(np.concatenate(running_dads_reward)))
+          tb_log(name="dads/reward-moving", scalar=np.mean(reward_of["moving"]))
+          tb_log(name="dads/reward-nonmoving", scalar=np.mean(reward_of["nonmoving"]))
           tb_log(name='dads/logp', scalar=np.mean(np.concatenate(running_logp)))
           tb_log(name='dads/logp_altz', scalar=np.mean(np.concatenate(running_logp_altz)))
           tb_log(name="dads/dynamics-l2-error-moving-goal", scalar=np.mean(dyn_l2_error))
