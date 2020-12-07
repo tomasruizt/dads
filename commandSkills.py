@@ -1,13 +1,15 @@
 import logging
 import os
 import pickle
-import warnings
-from typing import Callable, NamedTuple
+from typing import NamedTuple
 
 import gym
 from gym import Wrapper, GoalEnv
 from gym.wrappers import FlattenObservation, TimeLimit
 from runstats import Statistics
+import torch
+torch.set_num_threads(2)
+torch.set_num_interop_threads(2)
 from stable_baselines3 import SAC
 import numpy as np
 from stable_baselines3.common.buffers import ReplayBuffer
@@ -22,7 +24,7 @@ import matplotlib.pyplot as plt
 plt.ion()
 
 from envs.custom_envs import DADSEnv, make_point2d_dads_env, make_fetch_reach_env, \
-    make_fetch_push_env, make_point_mass_env
+    make_fetch_push_env, make_point_mass_env, make_ant_dads_env
 from scipy.stats import multivariate_normal as mvn
 
 
@@ -104,8 +106,8 @@ class SkillWrapper(Wrapper):
             self._skill_dim = len(self.env.achieved_goal_from_state(self.env.observation_space.sample()))
         obs_dim = self.env.observation_space.shape[0] + self._skill_dim
         self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(obs_dim, ))
-        self._sim = MVNStrategy(skill_dim=self._skill_dim)
-        self._cur_skill = self._sim.sample_skill()
+        self.strategy = MVNStrategy(skill_dim=self._skill_dim)
+        self._cur_skill = self.strategy.sample_skill()
         self._last_flat_obs = None
         self._goal_deltas_stats = [Statistics([1e-6]) for _ in range(self._skill_dim)]
 
@@ -120,7 +122,7 @@ class SkillWrapper(Wrapper):
         reward = self._reward(flat_obs)
         self._last_flat_obs = flat_obs
         if np.random.random() < 1/self._skill_reset_steps:
-            self._cur_skill = self._sim.sample_skill()
+            self._cur_skill = self.strategy.sample_skill()
         flat_obs_w_skill = self._add_skill(self._last_flat_obs)
         return flat_obs_w_skill, reward, done, info
 
@@ -130,11 +132,11 @@ class SkillWrapper(Wrapper):
         goal_delta = (achieved_goal - last_achieved_goal)[:self._skill_dim]
         for s, d in zip(self._goal_deltas_stats, goal_delta):
             s.push(d)
-        return self._sim.get_mutual_info(goal_delta=self._normalize(goal_delta),
-                                         skill=self._cur_skill)
+        return self.strategy.get_mutual_info(goal_delta=self._normalize(goal_delta),
+                                             skill=self._cur_skill)
 
     def reset(self, **kwargs):
-        self._cur_skill = self._sim.sample_skill()
+        self._cur_skill = self.strategy.sample_skill()
         self._last_flat_obs = self.env.reset(**kwargs)
         return self._add_skill(self._last_flat_obs)
 
@@ -146,7 +148,7 @@ class SkillWrapper(Wrapper):
 
     def predict(self, dict_obs: dict, deterministic=True):
         delta = (dict_obs["desired_goal"] - dict_obs["achieved_goal"])[:self._skill_dim]
-        skill = self._sim.choose_skill(desired_delta=self._normalize(delta))
+        skill = self.strategy.choose_skill(desired_delta=self._normalize(delta))
         flat_obs_w_skill = np.concatenate((dict_obs["observation"], skill))
         return self._sac.predict(observation=flat_obs_w_skill, deterministic=deterministic)
 
@@ -157,6 +159,21 @@ class SkillWrapper(Wrapper):
     def load(self, fname: str):
         with open(fname + "-stats.pkl", "rb") as file:
             self._goal_deltas_stats = pickle.load(file)
+
+    def relabel(self, observations, actions, next_observations, rewards, dones):
+        assert observations.ndim == 2, observations.ndim
+        assert observations.shape == next_observations.shape, (observations.shape, next_observations.shape)
+        deltas = self.env.achieved_goal_from_state(next_observations - observations)[:self._skill_dim]
+        deltas = self._normalize(deltas)
+
+        new_skills = self.strategy.sample_skill(len(observations))
+        mi = self.strategy.get_mutual_info
+        rewards = np.asarray([mi(goal_delta=d, skill=s) for d, s in zip(deltas, new_skills)])
+
+        new_obs, new_next_obs = observations.copy(), next_observations.copy()
+        set_skills(observations, new_skills)
+        set_skills(next_observations, new_skills)
+        return new_obs, new_next_obs, actions, rewards, dones
 
 
 def eval_dict_env(dict_env: GoalEnv, model, ep_len: int):
@@ -193,19 +210,10 @@ class AddExpCallback(BaseCallback):
         can_sample = buffer.size() > 0
         if not can_sample:
             return True
-
         samples = buffer.sample(self.num_added_samples)
-        new_skills = self.training_env.envs[0]._sample_skill(self.num_added_samples)
-
-        obs = samples.observations.cpu().numpy()
-        set_skills(obs, new_skills)
-
-        next_obs = samples.next_observations.cpu().numpy()
-        set_skills(next_obs, new_skills)
-
-        goal_delta = self.training_env.envs[0].achieved_goal_from_state(next_obs - obs)
-        rewards = -l2(target=goal_delta, sources=new_skills)
-        buffer.extend(obs, next_obs, samples.actions.cpu().numpy(), rewards, samples.dones.cpu().numpy())
+        wrapper: SkillWrapper = self.training_env.envs[0]
+        new_samples = wrapper.relabel(**{k:v.cpu().numpy() for k, v in samples._asdict().items()})
+        buffer.extend(*new_samples)
         return True
 
 
@@ -213,7 +221,8 @@ envs_fns = dict(
     point2d=make_point2d_dads_env,
     reach=make_fetch_reach_env,
     push=make_fetch_push_env,
-    pointmass=make_point_mass_env
+    pointmass=make_point_mass_env,
+    ant=make_ant_dads_env
 )
 
 
@@ -245,7 +254,8 @@ CONFS = dict(
     reach=Conf(ep_len=50, num_episodes=50, lr=0.001),
     point2d=Conf(ep_len=30, num_episodes=50, lr=0.001),
     push=Conf(ep_len=50, num_episodes=2000, first_n_goal_dims=2),
-    pointmass=Conf(ep_len=50, num_episodes=500)
+    pointmass=Conf(ep_len=50, num_episodes=500),
+    ant=Conf(ep_len=400, num_episodes=1000)
 )
 
 if __name__ == '__main__':
