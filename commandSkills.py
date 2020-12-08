@@ -43,8 +43,7 @@ class MutualInfoStrategy:
     def get_mutual_info(self, goal_delta: np.ndarray, skill: np.ndarray) -> float:
         log = dict()
         log["p(g'|z,g)"] = self._mi_numerator(delta=goal_delta, skill=skill)
-        rand_skills = self.sample_skill(1000)
-        log["p(g'|g)"] = self._mi_denominator(delta=goal_delta, skills=rand_skills)
+        log["p(g'|g)"] = self._mi_denominator(delta=goal_delta)
         mutual_info = log["p(g'|z,g)"] - log["p(g'|g)"]
         if mutual_info < -0.5:
             logging.warning(str((mutual_info, log["p(g'|z,g)"], log["p(g'|g)"])))
@@ -58,27 +57,26 @@ class MutualInfoStrategy:
         raise NotImplementedError
 
     @staticmethod
-    def _mi_denominator(delta: np.ndarray, skills: np.ndarray) -> float:
+    def _mi_denominator(delta: np.ndarray) -> float:
         raise NotImplementedError
 
 
 class DotProductStrategy(MutualInfoStrategy):
     def sample_skill(self, samples=None):
-        skills = super().sample_skill(samples)
-        return skills / np.linalg.norm(skills, axis=skills.ndim - 1)[None].T
+        return super().sample_skill(samples)
 
     @staticmethod
     def _mi_numerator(delta: np.ndarray, skill: np.ndarray) -> float:
-        return skill @ delta - np.linalg.norm(delta)
+        diff = delta - skill
+        return -0.5 * (diff @ diff)
 
-    @staticmethod
-    def _mi_denominator(delta: np.ndarray, skills: np.ndarray) -> float:
-        return np.log(np.mean(np.exp(skills @ delta - np.linalg.norm(delta))))
+    def _mi_denominator(self, delta: np.ndarray) -> float:
+        return -0.25*(delta @ delta) - np.log(np.sqrt(2**len(delta)))
 
     def choose_skill(self, desired_delta: np.ndarray) -> np.ndarray:
-        skills = self.sample_skill(samples=100)
-        similarity = skills @ desired_delta
-        return skills[similarity.argmax()]
+        skills = self.sample_skill(samples=1000)
+        diffs = l2(desired_delta, skills)
+        return skills[diffs.argmin()]
 
 
 class MVNStrategy(MutualInfoStrategy):
@@ -91,8 +89,8 @@ class MVNStrategy(MutualInfoStrategy):
     def _mi_numerator(delta: np.ndarray, skill: np.ndarray) -> float:
         return mvn.logpdf(x=delta, mean=skill)
 
-    @staticmethod
-    def _mi_denominator(delta: np.ndarray, skills: np.ndarray) -> float:
+    def _mi_denominator(self, delta: np.ndarray) -> float:
+        skills = self.sample_skill(1000)
         return np.log(np.mean(mvn.pdf(skills, mean=delta)))
 
 
@@ -106,7 +104,7 @@ class SkillWrapper(Wrapper):
             self._skill_dim = len(self.env.achieved_goal_from_state(self.env.observation_space.sample()))
         obs_dim = self.env.observation_space.shape[0] + self._skill_dim
         self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(obs_dim, ))
-        self.strategy = MVNStrategy(skill_dim=self._skill_dim)
+        self.strategy = DotProductStrategy(skill_dim=self._skill_dim)
         self._cur_skill = self.strategy.sample_skill()
         self._last_flat_obs = None
         self._goal_deltas_stats = [Statistics([1e-6]) for _ in range(self._skill_dim)]
@@ -260,7 +258,7 @@ CONFS = dict(
 
 if __name__ == '__main__':
     as_gdads = True
-    name = "pointmass"
+    name = "point2d"
     num_added_transtiions = 0
 
     dads_env_fn = envs_fns[name]
