@@ -105,10 +105,10 @@ class MVNStrategy(MutualInfoStrategy):
 
 
 class SkillWrapper(Wrapper):
-    def __init__(self, env: GoalEnv, skill_reset_steps: int):
+    def __init__(self, env: GoalEnv, skill_reset_steps: int, skill_dim=None):
         super().__init__(env)
         self._skill_reset_steps = skill_reset_steps
-        self._skill_dim = env.observation_space["desired_goal"].shape[0]
+        self._skill_dim = skill_dim or env.observation_space["desired_goal"].shape[0]
         obs_dim = self.env.observation_space["observation"].shape[0]
         self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(obs_dim + self._skill_dim, ))
         self.strategy = MVNStrategy(skill_dim=self._skill_dim)
@@ -175,22 +175,23 @@ class SkillWrapper(Wrapper):
         return new_obs, new_next_obs, actions, rewards, dones
 
 
-class GDADSEvalWrapper:
+class GDADSEvalWrapper(Wrapper):
     def __init__(self, dict_env, sw: SkillWrapper):
-        self.dict_env = dict_env
+        super().__init__(dict_env)
         self._sw = sw
+        self.observation_space = self._sw.observation_space
 
     def render(self, *args, **kwargs):
-        return self.dict_env.render(*args, **kwargs)
+        return self.env.render(*args, **kwargs)
 
     def step(self, action):
-        dict_obs, *step = self.dict_env.step(action)
+        dict_obs, *step = self.env.step(action)
         skill = self._sw.best_skill_for(dict_obs)
         flat_obs_w_skill = np.concatenate((dict_obs["observation"], skill))
         return (flat_obs_w_skill, *step)
 
     def reset(self):
-        dict_obs = self.dict_env.reset()
+        dict_obs = self.env.reset()
         skill = self._sw.best_skill_for(dict_obs)
         return np.concatenate((dict_obs["observation"], skill))
 
@@ -234,7 +235,7 @@ class Conf(NamedTuple):
     ep_len: int
     num_episodes: int
     lr: float = 3e-4
-    first_n_goal_dims: int = None
+    skill_dim: int = None
     reward_scaling: float = 1.0
 
 
@@ -247,23 +248,24 @@ def show(model, env, conf: Conf):
             d_obs, *_ = env.step(action)
 
 
-def train(model: SAC, conf: Conf, save_fname: str):
+def train(model: SAC, conf: Conf, save_fname: str, eval_env):
     model.learn(total_timesteps=conf.ep_len * conf.num_episodes, log_interval=10,
-                callback=[eval_cb(model.env)])
+                callback=[eval_cb(eval_env, conf=conf)])
     model.save(save_fname)
 
 
 CONFS = dict(
     point2d=Conf(ep_len=30, num_episodes=50, lr=0.01),
     reach=Conf(ep_len=50, num_episodes=50, lr=0.001),
-    push=Conf(ep_len=50, num_episodes=2000, first_n_goal_dims=2),
+    push=Conf(ep_len=50, num_episodes=1000, skill_dim=2),
     pointmass=Conf(ep_len=150, num_episodes=300, lr=0.001, reward_scaling=1/100),
-    ant=Conf(ep_len=200, num_episodes=5000, reward_scaling=1/50)
+    ant=Conf(ep_len=400, num_episodes=2000, reward_scaling=1/50)
 )
 
 
-def eval_cb(env):
-    return EvalCallback(eval_env=env, n_eval_episodes=10, log_path="modelsCommandSkills", deterministic=True)
+def eval_cb(env, conf: Conf):
+    return EvalCallback(eval_env=env, n_eval_episodes=10, log_path="modelsCommandSkills", deterministic=True,
+                        eval_freq=50*conf.ep_len)
 
 
 def save_cb(name: str):
@@ -272,8 +274,8 @@ def save_cb(name: str):
 
 def main():
     as_gdads = True
-    name = "point2d"
-    drop_abs_position = True
+    name = "push"
+    drop_abs_position = False
 
     dads_env_fn = envs_fns[name]
     conf: Conf = CONFS[name]
@@ -293,6 +295,8 @@ def main():
     flat_env = TransformReward(flat_env, f=lambda r: r*conf.reward_scaling)
     flat_env = Monitor(flat_env)
 
+    eval_env = flat_env if not as_gdads else GDADSEvalWrapper(dict_env, sw=flat_env)
+
     filename = f"modelsCommandSkills/{name}-gdads{as_gdads}"
     if os.path.exists(filename + ".zip"):
         sac = SAC.load(filename, env=flat_env)
@@ -300,12 +304,13 @@ def main():
             flat_env.load(filename)
     else:
         sac = SAC("MlpPolicy", env=flat_env, verbose=1, learning_rate=conf.lr,
-                  tensorboard_log=f"{filename}-tb", buffer_size=10000)
-        train(model=sac, conf=conf, save_fname=filename)
+                  tensorboard_log=f"{filename}-tb", buffer_size=100000, gamma=0.995,
+                  learning_starts=conf.ep_len, policy_kwargs=dict(net_arch=[512, 512]),
+                  ent_coef=0.1)
+        train(model=sac, conf=conf, save_fname=filename, eval_env=eval_env)
         if as_gdads:
             flat_env.save(filename)
 
-    eval_env = flat_env if not as_gdads else GDADSEvalWrapper(dict_env, sw=flat_env)
     show(model=sac, env=eval_env, conf=conf)
 
 

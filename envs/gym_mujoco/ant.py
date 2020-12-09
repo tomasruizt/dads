@@ -212,7 +212,7 @@ class AntAsGoalEnv(AntEnv):
 
 
 def AntGoalEnv() -> GoalEnv:
-    limits = 3
+    limits = 20
     env = AntAsGoalEnv(limits=limits)
     env = PlotGoalWrapper(env, goal_limit=limits)
     env = DenseGoalWrapper(env)
