@@ -242,10 +242,11 @@ class Conf(NamedTuple):
 def show(model, env, conf: Conf):
     while True:
         d_obs = env.reset()
-        for _ in range(conf.ep_len):
+        for t in range(conf.ep_len):
             env.render("human")
             action, _ = model.predict(d_obs, deterministic=True)
-            d_obs, *_ = env.step(action)
+            d_obs, reward, done, info = env.step(action)
+            print("step:", t, reward, done, info)
 
 
 def train(model: SAC, conf: Conf, save_fname: str, eval_env):
@@ -264,19 +265,15 @@ CONFS = dict(
 
 
 def eval_cb(env, conf: Conf):
-    return EvalCallback(eval_env=env, n_eval_episodes=10, log_path="modelsCommandSkills", deterministic=True,
-                        eval_freq=50*conf.ep_len)
+    return EvalCallback(eval_env=env, n_eval_episodes=3, log_path="modelsCommandSkills", deterministic=True,
+                        eval_freq=20*conf.ep_len)
 
 
 def save_cb(name: str):
     return CheckpointCallback(save_freq=10000, save_path="modelsCommandSkills", name_prefix=name)
 
 
-def main():
-    as_gdads = True
-    name = "push"
-    drop_abs_position = False
-
+def get_env(name: str, drop_abs_position: bool):
     dads_env_fn = envs_fns[name]
     conf: Conf = CONFS[name]
 
@@ -284,18 +281,28 @@ def main():
     dict_env = TimeLimit(dict_env, max_episode_steps=conf.ep_len)
     if drop_abs_position:
         dict_env = DropGoalEnvsAbsoluteLocation(dict_env)
+    return dict_env
+
+
+def main():
+    as_gdads = True
+    name = "pointmass"
+    drop_abs_position = True
+
+    conf: Conf = CONFS[name]
+    dict_env = get_env(name=name, drop_abs_position=drop_abs_position)
     if as_gdads:
         flat_env = SkillWrapper(env=dict_env, skill_reset_steps=conf.ep_len // 2)
     else:
-        flat_obs_content = ["observation", "desired_goal", "achieved_goal"]
-        if drop_abs_position:
-            flat_obs_content.remove("achieved_goal")  # Because always 0 vector
-        flat_env = FlattenObservation(FilterObservation(dict_env, filter_keys=flat_obs_content))
-
+        flat_env = flatten_env(dict_env, drop_abs_position)
     flat_env = TransformReward(flat_env, f=lambda r: r*conf.reward_scaling)
     flat_env = Monitor(flat_env)
 
-    eval_env = flat_env if not as_gdads else GDADSEvalWrapper(dict_env, sw=flat_env)
+    dict_env = get_env(name=name, drop_abs_position=drop_abs_position)
+    if as_gdads:
+        eval_env = GDADSEvalWrapper(dict_env, sw=flat_env)
+    else:
+        eval_env = flatten_env(dict_env=dict_env, drop_abs_position=drop_abs_position)
 
     filename = f"modelsCommandSkills/{name}-gdads{as_gdads}"
     if os.path.exists(filename + ".zip"):
@@ -312,6 +319,13 @@ def main():
             flat_env.save(filename)
 
     show(model=sac, env=eval_env, conf=conf)
+
+
+def flatten_env(dict_env, drop_abs_position):
+    flat_obs_content = ["observation", "desired_goal", "achieved_goal"]
+    if drop_abs_position:
+        flat_obs_content.remove("achieved_goal")  # Because always 0 vector
+    return FlattenObservation(FilterObservation(dict_env, filter_keys=flat_obs_content))
 
 
 if __name__ == '__main__':

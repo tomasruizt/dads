@@ -1,5 +1,6 @@
 library(data.table)
 library(ggplot2)
+library(tidyr)
 # svg aspect: 500px times 350px
 
 setwd("/tomasruiz/code/thesis/dads/")
@@ -87,9 +88,5 @@ pushComparePredictionErrorToIntrinsicReward <- function(){
         facet_wrap(vars(METRIC), scales = "free") +
         ylab("") +
         geom_point(size = 1, alpha = 0.6) +
-        ggtitle("")
-
-    wide <- pivot_wider(errorData[ITERATION > 100], names_from = c(METRIC), values_from = VALUE)
-    ggplot(wide, aes(x = `Intrinsic Reward`, y = log(`Dynamics Prediction Error`), color = `Transition Type`)) +
-        geom_point(size = 1)
+        ggtitle("Avoidance of unpredictable Transitions")
 }
