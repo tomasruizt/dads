@@ -37,8 +37,7 @@ class MutualInfoStrategy:
         self._skill_dim = skill_dim
 
     def sample_skill(self, samples=None):
-        size = (samples, self._skill_dim) if samples else self._skill_dim
-        return np.random.normal(size=size)
+        raise NotImplementedError
 
     def get_mutual_info(self, goal_delta: np.ndarray, skill: np.ndarray) -> float:
         log = dict()
@@ -52,21 +51,19 @@ class MutualInfoStrategy:
     def choose_skill(self, desired_delta: np.ndarray) -> np.ndarray:
         raise NotImplementedError
 
-    @staticmethod
-    def _mi_numerator(delta: np.ndarray, skill: np.ndarray) -> float:
+    def _mi_numerator(self, delta: np.ndarray, skill: np.ndarray) -> float:
         raise NotImplementedError
 
-    @staticmethod
-    def _mi_denominator(delta: np.ndarray) -> float:
+    def _mi_denominator(self, delta: np.ndarray) -> float:
         raise NotImplementedError
 
 
 class DotProductStrategy(MutualInfoStrategy):
     def sample_skill(self, samples=None):
-        return super().sample_skill(samples)
+        size = (samples, self._skill_dim) if samples else self._skill_dim
+        return np.random.normal(size=size)
 
-    @staticmethod
-    def _mi_numerator(delta: np.ndarray, skill: np.ndarray) -> float:
+    def _mi_numerator(self, delta: np.ndarray, skill: np.ndarray) -> float:
         diff = delta - skill
         return -0.5 * (diff @ diff)
 
@@ -80,18 +77,28 @@ class DotProductStrategy(MutualInfoStrategy):
 
 
 class MVNStrategy(MutualInfoStrategy):
+    def __init__(self, skill_dim: int):
+        super().__init__(skill_dim)
+        self.cov = cov = {
+            "z": np.eye(self._skill_dim),
+            "g'|z,g": 0.1 * np.eye(self._skill_dim)
+        }
+        # Integration of two gaussians <-> convolution <-> sum of two gaussian RVs.
+        cov["g'|g"] = cov["z"] + cov["g'|z,g"]
+
+    def sample_skill(self, samples=1):
+        return mvn.rvs(size=samples, cov=self.cov["z"])
+
     def choose_skill(self, desired_delta: np.ndarray) -> np.ndarray:
         skills = self.sample_skill(samples=100)
         diffs = l2(desired_delta, skills)
         return skills[diffs.argmin()]
 
-    @staticmethod
-    def _mi_numerator(delta: np.ndarray, skill: np.ndarray) -> float:
-        return mvn.logpdf(x=delta, mean=skill)
+    def _mi_numerator(self, delta: np.ndarray, skill: np.ndarray) -> float:
+        return mvn.logpdf(x=delta, mean=skill, cov=self.cov["g'|z,g"])
 
     def _mi_denominator(self, delta: np.ndarray) -> float:
-        skills = self.sample_skill(1000)
-        return np.log(np.mean(mvn.pdf(skills, mean=delta)))
+        return mvn.logpdf(x=delta, cov=self.cov["g'|g"])
 
 
 class SkillWrapper(Wrapper):
@@ -104,7 +111,7 @@ class SkillWrapper(Wrapper):
             self._skill_dim = len(self.env.achieved_goal_from_state(self.env.observation_space.sample()))
         obs_dim = self.env.observation_space.shape[0] + self._skill_dim
         self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(obs_dim, ))
-        self.strategy = DotProductStrategy(skill_dim=self._skill_dim)
+        self.strategy = MVNStrategy(skill_dim=self._skill_dim)
         self._cur_skill = self.strategy.sample_skill()
         self._last_flat_obs = None
         self._goal_deltas_stats = [Statistics([1e-6]) for _ in range(self._skill_dim)]
@@ -258,7 +265,7 @@ CONFS = dict(
 
 if __name__ == '__main__':
     as_gdads = True
-    name = "point2d"
+    name = "reach"
     num_added_transtiions = 0
 
     dads_env_fn = envs_fns[name]
