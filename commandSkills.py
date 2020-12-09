@@ -5,9 +5,12 @@ from typing import NamedTuple
 
 import gym
 from gym import Wrapper, GoalEnv
-from gym.wrappers import FlattenObservation, TimeLimit
+from gym.wrappers import FlattenObservation, TimeLimit, TransformReward, FilterObservation
 from runstats import Statistics
 import torch
+
+from envs.gym_mujoco.custom_wrappers import DropGoalEnvsAbsoluteLocation
+
 torch.set_num_threads(2)
 torch.set_num_interop_threads(2)
 from stable_baselines3 import SAC
@@ -44,7 +47,7 @@ class MutualInfoStrategy:
         log["p(g'|z,g)"] = self._mi_numerator(delta=goal_delta, skill=skill)
         log["p(g'|g)"] = self._mi_denominator(delta=goal_delta)
         mutual_info = log["p(g'|z,g)"] - log["p(g'|g)"]
-        if mutual_info < -0.5:
+        if mutual_info < -10:
             logging.warning(str((mutual_info, log["p(g'|z,g)"], log["p(g'|g)"])))
         return mutual_info
 
@@ -90,7 +93,7 @@ class MVNStrategy(MutualInfoStrategy):
         return mvn.rvs(size=samples, cov=self.cov["z"])
 
     def choose_skill(self, desired_delta: np.ndarray) -> np.ndarray:
-        skills = self.sample_skill(samples=100)
+        skills = self.sample_skill(samples=1000)
         diffs = l2(desired_delta, skills)
         return skills[diffs.argmin()]
 
@@ -102,39 +105,35 @@ class MVNStrategy(MutualInfoStrategy):
 
 
 class SkillWrapper(Wrapper):
-    def __init__(self, env: DADSEnv, skill_reset_steps: int, first_n_goal_dims=None):
+    def __init__(self, env: GoalEnv, skill_reset_steps: int):
         super().__init__(env)
         self._skill_reset_steps = skill_reset_steps
-        if first_n_goal_dims:
-            self._skill_dim = first_n_goal_dims
-        else:
-            self._skill_dim = len(self.env.achieved_goal_from_state(self.env.observation_space.sample()))
-        obs_dim = self.env.observation_space.shape[0] + self._skill_dim
-        self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(obs_dim, ))
+        self._skill_dim = env.observation_space["desired_goal"].shape[0]
+        obs_dim = self.env.observation_space["observation"].shape[0]
+        self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(obs_dim + self._skill_dim, ))
         self.strategy = MVNStrategy(skill_dim=self._skill_dim)
         self._cur_skill = self.strategy.sample_skill()
-        self._last_flat_obs = None
+        self._last_dict_obs = None
         self._goal_deltas_stats = [Statistics([1e-6]) for _ in range(self._skill_dim)]
 
     def _normalize(self, delta):
         μs = [s.mean() for s in self._goal_deltas_stats]
         σs = [s.stddev() for s in self._goal_deltas_stats]
-        # σs = [0.5*max((s.maximum() - μ), μ - s.minimum()) for μ, s in zip(μs, self._goal_deltas_stats)]
         return np.asarray([(d-μ)/σ for (d, μ, σ) in zip(delta, μs, σs)])
 
     def step(self, action):
-        flat_obs, _, done, info = self.env.step(action)
-        reward = self._reward(flat_obs)
-        self._last_flat_obs = flat_obs
+        dict_obs, _, done, info = self.env.step(action)
+        reward = self._reward(dict_obs=dict_obs)
+        self._last_dict_obs = dict_obs
         if np.random.random() < 1/self._skill_reset_steps:
             self._cur_skill = self.strategy.sample_skill()
-        flat_obs_w_skill = self._add_skill(self._last_flat_obs)
+        flat_obs_w_skill = self._add_skill(observation=dict_obs["observation"])
         return flat_obs_w_skill, reward, done, info
 
-    def _reward(self, flat_obs: np.ndarray) -> float:
-        last_achieved_goal = self.env.achieved_goal_from_state(self._last_flat_obs)
-        achieved_goal = self.env.achieved_goal_from_state(flat_obs)
-        goal_delta = (achieved_goal - last_achieved_goal)[:self._skill_dim]
+    def _reward(self, dict_obs: np.ndarray) -> float:
+        last_diff = self._last_dict_obs["achieved_goal"] - self._last_dict_obs["desired_goal"]
+        cur_diff = dict_obs["achieved_goal"] - dict_obs["desired_goal"]
+        goal_delta = (cur_diff - last_diff)[:self._skill_dim]
         for s, d in zip(self._goal_deltas_stats, goal_delta):
             s.push(d)
         return self.strategy.get_mutual_info(goal_delta=self._normalize(goal_delta),
@@ -142,11 +141,11 @@ class SkillWrapper(Wrapper):
 
     def reset(self, **kwargs):
         self._cur_skill = self.strategy.sample_skill()
-        self._last_flat_obs = self.env.reset(**kwargs)
-        return self._add_skill(self._last_flat_obs)
+        self._last_dict_obs = self.env.reset(**kwargs)
+        return self._add_skill(observation=self._last_dict_obs["observation"])
 
-    def _add_skill(self, flat_obs: np.ndarray) -> np.ndarray:
-        return np.concatenate((flat_obs, self._cur_skill))
+    def _add_skill(self, observation: np.ndarray) -> np.ndarray:
+        return np.concatenate((observation, self._cur_skill))
 
     def set_sac(self, sac):
         self._sac = sac
@@ -190,12 +189,6 @@ def eval_dict_env(dict_env: GoalEnv, model, ep_len: int):
             dict_obs, *_ = dict_env.step(action)
 
 
-def for_sac(env, episode_len: int):
-    env = as_dict_env(env)
-    env = TimeLimit(env, max_episode_steps=episode_len)
-    return FlattenObservation(env)
-
-
 def as_dict_env(env):
     return ForHER(env)
 
@@ -236,9 +229,10 @@ class Conf(NamedTuple):
     num_episodes: int
     lr: float = 3e-4
     first_n_goal_dims: int = None
+    reward_scaling: float = 1.0
 
 
-def show(model, env):
+def show(model, env, conf: Conf):
     while True:
         d_obs = env.reset()
         for _ in range(conf.ep_len):
@@ -247,53 +241,65 @@ def show(model, env):
             d_obs, *_ = env.step(action)
 
 
-def train(model, conf: Conf, added_trans: int, save_fname: str):
+def train(model: SAC, conf: Conf, save_fname: str, added_trans = 0):
     kwargs = dict()
     if added_trans > 0:
         kwargs["callback"] = AddExpCallback(num_added_samples=added_trans)
-    model.learn(total_timesteps=conf.ep_len * conf.num_episodes, **kwargs)
+    model.learn(total_timesteps=conf.ep_len * conf.num_episodes, log_interval=10, **kwargs)
     model.save(save_fname)
 
 
 CONFS = dict(
+    point2d=Conf(ep_len=30, num_episodes=50, lr=0.01),
     reach=Conf(ep_len=50, num_episodes=50, lr=0.001),
-    point2d=Conf(ep_len=30, num_episodes=50, lr=0.001),
     push=Conf(ep_len=50, num_episodes=2000, first_n_goal_dims=2),
-    pointmass=Conf(ep_len=50, num_episodes=500),
-    ant=Conf(ep_len=400, num_episodes=1000)
+    pointmass=Conf(ep_len=150, num_episodes=300, lr=0.001, reward_scaling=1/100),
+    ant=Conf(ep_len=400, num_episodes=250, reward_scaling=1/500)
 )
 
-if __name__ == '__main__':
-    as_gdads = True
-    name = "reach"
-    num_added_transtiions = 0
+
+def main():
+    as_gdads = False
+    name = "pointmass"
+    drop_abs_position = True
 
     dads_env_fn = envs_fns[name]
     conf: Conf = CONFS[name]
 
+    dict_env = as_dict_env(dads_env_fn())
+    dict_env = TimeLimit(dict_env, max_episode_steps=conf.ep_len)
+    if drop_abs_position:
+        dict_env = DropGoalEnvsAbsoluteLocation(dict_env)
     if as_gdads:
-        env = SkillWrapper(TimeLimit(dads_env_fn(), max_episode_steps=conf.ep_len),
-                           skill_reset_steps=conf.ep_len // 2,
-                           first_n_goal_dims=conf.first_n_goal_dims)
+        flat_env = SkillWrapper(env=dict_env, skill_reset_steps=conf.ep_len // 2)
     else:
-        env = for_sac(dads_env_fn(), episode_len=conf.ep_len)
-    env = Monitor(env)
+        flat_obs_content = ["observation", "desired_goal", "achieved_goal"]
+        if drop_abs_position:
+            flat_obs_content.remove("achieved_goal")  # Because always 0 vector
+        flat_env = FlattenObservation(FilterObservation(dict_env, filter_keys=flat_obs_content))
+
+    flat_env = TransformReward(flat_env, f=lambda r: r*conf.reward_scaling)
+    flat_env = Monitor(flat_env)
 
     filename = f"modelsCommandSkills/{name}-gdads{as_gdads}"
     if os.path.exists(filename + ".zip"):
-        sac = SAC.load(filename, env=env)
+        sac = SAC.load(filename, env=flat_env)
         if as_gdads:
-            env.load(filename)
+            flat_env.load(filename)
     else:
-        sac = SAC("MlpPolicy", env=env, verbose=1, learning_rate=conf.lr,
+        sac = SAC("MlpPolicy", env=flat_env, verbose=1, learning_rate=conf.lr,
                   tensorboard_log=f"{filename}-tb", buffer_size=10000)
-        train(model=sac, conf=conf, added_trans=num_added_transtiions, save_fname=filename)
+        train(model=sac, conf=conf, save_fname=filename)
         if as_gdads:
-            env.save(filename)
+            flat_env.save(filename)
 
     if as_gdads:
-        env.set_sac(sac)
-        eval_dict_env(dict_env=as_dict_env(env=dads_env_fn()),
-                      model=env,
+        flat_env.set_sac(sac)
+        eval_dict_env(dict_env=dict_env,
+                      model=flat_env,
                       ep_len=conf.ep_len)
-    show(model=sac, env=env)
+    show(model=sac, env=flat_env, conf=conf)
+
+
+if __name__ == '__main__':
+    main()

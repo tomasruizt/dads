@@ -1,5 +1,6 @@
+import gym
 import numpy as np
-from gym import Wrapper
+from gym import Wrapper, ObservationWrapper
 from multi_goal.utils import get_updateable_scatter
 
 
@@ -41,3 +42,31 @@ class DenseGoalWrapper(Wrapper):
         assert state.ndim <= 2, state.ndim
         is_batch = state.ndim == 2
         return state[..., :2] if is_batch else state[:2]
+
+
+class DropGoalEnvsAbsoluteLocation(ObservationWrapper):
+    """
+    Requires GoalEnvs where:
+    * The first 2 dims of the obs["observation"] are the current absolute location.
+    * (achieved_goal, desired_goal) are 2d absolute locations
+    """
+
+    def __init__(self, env):
+        super().__init__(env)
+        goal_dim = env.observation_space["desired_goal"].shape[0]
+        assert goal_dim == 2
+        obs_dim = env.observation_space["observation"].shape[0]
+        box = lambda d: gym.spaces.Box(-np.inf, np.inf, shape=(d, ))
+        self.observation_space = gym.spaces.Dict(spaces=dict(
+            observation=box(obs_dim - 2),
+            achieved_goal=box(goal_dim),
+            desired_goal=box(goal_dim)))
+
+    def observation(self, observation: dict):
+        abs_position = observation["observation"][:2]
+        achieved_goal = np.zeros_like(abs_position)
+        desired_goal = observation["desired_goal"] - abs_position
+        obs_without_abs_position = observation["observation"][2:]
+        return dict(observation=obs_without_abs_position,
+                    desired_goal=desired_goal,
+                    achieved_goal=achieved_goal)

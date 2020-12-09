@@ -34,7 +34,9 @@ class PointMassEnv(mujoco_env.MujocoEnv, utils.EzPickle):
                expose_velocity=True,
                expose_goal=True,
                use_simulator=False,
-               model_path='point.xml'):
+               model_path='point.xml',
+               goal_limits=2):
+    self._lims = goal_limits
     self._sample_target = target
     if self._sample_target is not None:
       self.goal = np.array([1.0, 1.0])
@@ -65,8 +67,8 @@ class PointMassEnv(mujoco_env.MujocoEnv, utils.EzPickle):
       ori = qpos[2]
       dx = math.cos(ori) * force
       dy = math.sin(ori) * force
-      qpos[0] = np.clip(qpos[0] + dx, -2, 2)
-      qpos[1] = np.clip(qpos[1] + dy, -2, 2)
+      qpos[0] = np.clip(qpos[0] + dx, -self._lims, self._lims)
+      qpos[1] = np.clip(qpos[1] + dy, -self._lims, self._lims)
       qvel = self.sim.data.qvel.flat.copy()
       self.set_state(qpos, qvel)
 
@@ -109,20 +111,18 @@ class PointMassEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     self.viewer.cam.distance = self.model.stat.extent * 0.5
 
 
-def sample_2d_goal(_):
-    return np.random.uniform(-2, 2, size=2)
-
-
 def PointMassGoalEnv() -> GoalEnv:
-    env = PointMassAsGoalEnv()
-    env = PlotGoalWrapper(env, goal_limit=2)
+    goal_limit = 20
+    env = PointMassAsGoalEnv(goal_limits=goal_limit)
+    env = PlotGoalWrapper(env, goal_limit=goal_limit)
     env = DenseGoalWrapper(env)
     return DictInfoWrapper(env)
 
 
 class PointMassAsGoalEnv(PointMassEnv):
-    def __init__(self):
-        super().__init__(expose_velocity=True, expose_goal=False, target=sample_2d_goal)
+    def __init__(self, goal_limits):
+        super().__init__(expose_velocity=True, expose_goal=False,
+                         target=lambda s: np.random.uniform(-goal_limits, goal_limits, size=2), goal_limits=goal_limits)
 
     def _get_obs(self):
         obs = super()._get_obs().astype(np.float32)
