@@ -3,7 +3,7 @@ library(ggplot2)
 # svg aspect: 500px times 350px
 
 setwd("/tomasruiz/code/thesis/dads/")
-results <- fread("plot-results/dads-push/success-rate.csv")
+results <- fread("plot-results/dads-push/movement-cmp.csv")
 
 name <- function(goalSpace, resampling) {
     if (!goalSpace && !resampling)
@@ -74,8 +74,22 @@ ggplot(transData, aes(x = ITERATION, y = VALUE, color = ABLATION)) +
                 alpha = 0.3, color = NA) + ggtitle("Transitions that move the goal [%]") +
     ylim(-1, 100)
 
-errorData <- results[MEASUREMENT %like% "DYN_L2_ERROR" & ABLATION == "DADS"]
-errorData[MEASUREMENT == "DYN_L2_ERROR_MOVING_GOAL", MEASUREMENT := "Moving transitions"]
-errorData[MEASUREMENT == "DYN_L2_ERROR_NONMOVING_GOAL", MEASUREMENT := "Non-moving transitions"]
-ggplot(errorData, aes(x = ITERATION, y = VALUE, color = MEASUREMENT)) +
-    geom_point(size = 1) + ggtitle("DADS Dynamics Mean Squared Error")
+pushComparePredictionErrorToIntrinsicReward <- function(){
+    errorData <- results[MEASUREMENT %like% "DYN_L2_ERROR" |
+                             MEASUREMENT %like% "PSEUDOREWARD_" & ABLATION == "DADS"]
+    errorData[MEASUREMENT %like% "NONMOVING", `Transition Type` := "static"]
+    errorData[!(MEASUREMENT %like% "NONMOVING"), `Transition Type` := "moving"]
+    errorData[MEASUREMENT %like% "DYN_L2_ERROR", METRIC := "Dynamics Prediction Error"]
+    errorData[!(MEASUREMENT %like% "DYN_L2_ERROR"), METRIC := "Intrinsic Reward"]
+    errorData$METRIC <- factor(errorData$METRIC, levels = c("Dynamics Prediction Error", "Intrinsic Reward"))
+    errorData <- errorData[, .(ITERATION, SEED, VALUE, `Transition Type`, METRIC)]
+    ggplot(errorData, aes(x = ITERATION, y = VALUE, color = `Transition Type`)) +
+        facet_wrap(vars(METRIC), scales = "free") +
+        ylab("") +
+        geom_point(size = 1, alpha = 0.6) +
+        ggtitle("")
+
+    wide <- pivot_wider(errorData[ITERATION > 100], names_from = c(METRIC), values_from = VALUE)
+    ggplot(wide, aes(x = `Intrinsic Reward`, y = log(`Dynamics Prediction Error`), color = `Transition Type`)) +
+        geom_point(size = 1)
+}

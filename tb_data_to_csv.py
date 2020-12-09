@@ -62,7 +62,9 @@ def to_dataframe(tb_data, config: Config) -> pd.DataFrame:
         ("dyn-train-goal-changing-transitions[%]", "TRANSITIONS_MOVING_GOAL[%]"),
         ("dynamics-l2-error-moving-goal", "DYN_L2_ERROR_MOVING_GOAL"),
         ("dynamics-l2-error-nonmoving", "DYN_L2_ERROR_NONMOVING_GOAL"),
-        ("DADS-MPC/is-success", "IS_SUCCESS")
+        ("DADS-MPC/is-success", "IS_SUCCESS"),
+        ("reward-moving", "PSEUDOREWARD_MOVING"),
+        ("reward-nonmoving", "PSEUDOREWARD_NONMOVING")
     ]
     dfs = [tag_to_dataframe(tb_data, tag, colname) for tag, colname in tag_to_colname]
     df = pd.concat(dfs)

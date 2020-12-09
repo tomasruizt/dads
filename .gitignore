@@ -25,3 +25,4 @@ MUJOCO_LOG.TXT
 modelsCommandSkills/
 demo*
 replay.sh
+.Rproj.user
