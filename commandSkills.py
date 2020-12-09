@@ -16,7 +16,7 @@ torch.set_num_interop_threads(2)
 from stable_baselines3 import SAC
 import numpy as np
 from stable_baselines3.common.buffers import ReplayBuffer
-from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.callbacks import BaseCallback, EvalCallback, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 
 from solvability import ForHER
@@ -147,14 +147,9 @@ class SkillWrapper(Wrapper):
     def _add_skill(self, observation: np.ndarray) -> np.ndarray:
         return np.concatenate((observation, self._cur_skill))
 
-    def set_sac(self, sac):
-        self._sac = sac
-
-    def predict(self, dict_obs: dict, deterministic=True):
+    def best_skill_for(self, dict_obs):
         delta = (dict_obs["desired_goal"] - dict_obs["achieved_goal"])[:self._skill_dim]
-        skill = self.strategy.choose_skill(desired_delta=self._normalize(delta))
-        flat_obs_w_skill = np.concatenate((dict_obs["observation"], skill))
-        return self._sac.predict(observation=flat_obs_w_skill, deterministic=deterministic)
+        return self.strategy.choose_skill(desired_delta=self._normalize(delta))
 
     def save(self, fname: str):
         with open(fname + "-stats.pkl", "wb") as file:
@@ -180,13 +175,24 @@ class SkillWrapper(Wrapper):
         return new_obs, new_next_obs, actions, rewards, dones
 
 
-def eval_dict_env(dict_env: GoalEnv, model, ep_len: int):
-    while True:
-        dict_obs = dict_env.reset()
-        for _ in range(ep_len):
-            dict_env.render("human")
-            action, _ = model.predict(dict_obs, deterministic=True)
-            dict_obs, *_ = dict_env.step(action)
+class GDADSEvalWrapper:
+    def __init__(self, dict_env, sw: SkillWrapper):
+        self.dict_env = dict_env
+        self._sw = sw
+
+    def render(self, *args, **kwargs):
+        return self.dict_env.render(*args, **kwargs)
+
+    def step(self, action):
+        dict_obs, *step = self.dict_env.step(action)
+        skill = self._sw.best_skill_for(dict_obs)
+        flat_obs_w_skill = np.concatenate((dict_obs["observation"], skill))
+        return (flat_obs_w_skill, *step)
+
+    def reset(self):
+        dict_obs = self.dict_env.reset()
+        skill = self._sw.best_skill_for(dict_obs)
+        return np.concatenate((dict_obs["observation"], skill))
 
 
 def as_dict_env(env):
@@ -241,11 +247,9 @@ def show(model, env, conf: Conf):
             d_obs, *_ = env.step(action)
 
 
-def train(model: SAC, conf: Conf, save_fname: str, added_trans = 0):
-    kwargs = dict()
-    if added_trans > 0:
-        kwargs["callback"] = AddExpCallback(num_added_samples=added_trans)
-    model.learn(total_timesteps=conf.ep_len * conf.num_episodes, log_interval=10, **kwargs)
+def train(model: SAC, conf: Conf, save_fname: str):
+    model.learn(total_timesteps=conf.ep_len * conf.num_episodes, log_interval=10,
+                callback=[eval_cb(model.env)])
     model.save(save_fname)
 
 
@@ -254,13 +258,21 @@ CONFS = dict(
     reach=Conf(ep_len=50, num_episodes=50, lr=0.001),
     push=Conf(ep_len=50, num_episodes=2000, first_n_goal_dims=2),
     pointmass=Conf(ep_len=150, num_episodes=300, lr=0.001, reward_scaling=1/100),
-    ant=Conf(ep_len=400, num_episodes=250, reward_scaling=1/500)
+    ant=Conf(ep_len=200, num_episodes=5000, reward_scaling=1/50)
 )
 
 
+def eval_cb(env):
+    return EvalCallback(eval_env=env, n_eval_episodes=10, log_path="modelsCommandSkills", deterministic=True)
+
+
+def save_cb(name: str):
+    return CheckpointCallback(save_freq=10000, save_path="modelsCommandSkills", name_prefix=name)
+
+
 def main():
-    as_gdads = False
-    name = "pointmass"
+    as_gdads = True
+    name = "point2d"
     drop_abs_position = True
 
     dads_env_fn = envs_fns[name]
@@ -293,12 +305,8 @@ def main():
         if as_gdads:
             flat_env.save(filename)
 
-    if as_gdads:
-        flat_env.set_sac(sac)
-        eval_dict_env(dict_env=dict_env,
-                      model=flat_env,
-                      ep_len=conf.ep_len)
-    show(model=sac, env=flat_env, conf=conf)
+    eval_env = flat_env if not as_gdads else GDADSEvalWrapper(dict_env, sw=flat_env)
+    show(model=sac, env=eval_env, conf=conf)
 
 
 if __name__ == '__main__':
