@@ -1,6 +1,9 @@
+import logging
 import os
+import warnings
 from typing import Any, Callable, Tuple, NamedTuple, List
 import pandas as pd
+from tensorflow.python.framework.errors_impl import DataLossError
 from tensorflow.python.summary.summary_iterator import summary_iterator
 import re
 
@@ -81,9 +84,12 @@ if __name__ == '__main__':
         os.remove(csv_filename)
 
     dfs = []
-    for run in os.listdir(basedir):
-        df = to_dataframe(tb_data=get_tb_data(folder=os.path.join(basedir, run)),
-                          config=get_config(filename=run))
-        dfs.append(df)
+    for filename in os.listdir(basedir):
+        try:
+            df = to_dataframe(tb_data=get_tb_data(folder=os.path.join(basedir, filename)),
+                              config=get_config(filename=filename))
+            dfs.append(df)
+        except DataLossError:
+            logging.error(f"file {filename} had an error.")
     full_df = pd.concat(dfs)
     full_df.to_csv(csv_filename, index=False)
