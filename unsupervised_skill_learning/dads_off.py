@@ -33,7 +33,8 @@ from common_funcs import DADSStep, grouper, check_reward_fn, NullSkillProvider, 
 from custom_mppi import MPPISkillProvider, SimpleDynamics
 from density_estimation import DensityEstimator
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
-    make_point2d_dads_env, make_fetch_reach_env, DADSEnv, make_fetch_push_env
+    make_point2d_dads_env, make_fetch_reach_env, DADSEnv, make_fetch_push_env, \
+    make_point_mass_env
 from lib.simple_buffer import SimpleBuffer, Transition
 from skill_dynamics import SkillDynamics, l2
 from unsupervised_skill_learning.common_funcs import process_observation_given, \
@@ -268,6 +269,7 @@ custom_envs_ctors = dict(
     push=make_fetch_push_env,
     pickandplace=make_fetch_pick_and_place_env,
     slide=make_fetch_slide_env,
+    pointmass=make_point_mass_env
 )
 
 
@@ -1264,6 +1266,8 @@ def main(_):
 
           def resample_trajs(num_batches: int, batch_size: int) -> List[Trajectory]:
               large_trajectory = buffer.sample(n=FLAGS.skill_dyn_batch_size*FLAGS.skill_dyn_train_steps)
+              pct = pct_of_goal_controlling_transitions(env=py_env, trajs=[large_trajectory])
+              tb_log("dads/buffer-goal-changing-transitions[%]", pct)
               traj_list = uniform_resampler.resample(
                   num_batches=num_batches,
                   batch_size=batch_size,
