@@ -12,10 +12,10 @@ def get_tag(el: Any) -> str:
     return el.summary.value[0].tag
 
 
-def tag_contains(tag: str) -> Callable[[Any], bool]:
+def tag_eq(tag: str) -> Callable[[Any], bool]:
     def predicate(el: Any) -> bool:
         try:
-            return tag in get_tag(el)
+            return tag == get_tag(el)
         except:
             return False
     return predicate
@@ -42,15 +42,14 @@ def get_config(filename: str) -> Config:
                   seed=int(match[3]))
 
 
-def get_tb_data(folder: str) -> List:
-    train_folder = os.path.join(folder, "train")
-    events_fname = [f for f in os.listdir(train_folder) if f.startswith("events.out")][0]
-    events_fpath = os.path.join(train_folder, events_fname)
+def get_tb_data(events_out_dir: str) -> List:
+    events_fname = [f for f in os.listdir(events_out_dir) if f.startswith("events.out")][0]
+    events_fpath = os.path.join(events_out_dir, events_fname)
     return list(summary_iterator(events_fpath))
 
 
 def tag_to_dataframe(tb_data, tagname: str, colname) -> pd.DataFrame:
-    tag_data = list(filter(tag_contains(tagname), tb_data))
+    tag_data = list(filter(tag_eq(tagname), tb_data))
     return pd.DataFrame(dict(
         ITERATION=map(step, tag_data),
         MEASUREMENT=colname,
@@ -67,7 +66,8 @@ def to_dataframe(tb_data, config: Config) -> pd.DataFrame:
         ("dynamics-l2-error-nonmoving", "DYN_L2_ERROR_NONMOVING_GOAL"),
         ("DADS-MPC/is-success", "IS_SUCCESS"),
         ("reward-moving", "PSEUDOREWARD_MOVING"),
-        ("reward-nonmoving", "PSEUDOREWARD_NONMOVING")
+        ("reward-nonmoving", "PSEUDOREWARD_NONMOVING"),
+        ("rollout/ep_rew_reward", "NEW-PSEUDOREWARD")
     ]
     dfs = [tag_to_dataframe(tb_data, tag, colname) for tag, colname in tag_to_colname]
     df = pd.concat(dfs)
@@ -77,19 +77,31 @@ def to_dataframe(tb_data, config: Config) -> pd.DataFrame:
     return df
 
 
-if __name__ == '__main__':
-    basedir = "results/reach"
+def dump_dads_csv(basedir: str, subdir_name="train"):
     csv_filename = os.path.join(basedir, "full-results.csv")
     if os.path.isfile(csv_filename):
         os.remove(csv_filename)
-
     dfs = []
-    for filename in os.listdir(basedir):
+    for seed_dir in next(os.walk(basedir))[1]:
         try:
-            df = to_dataframe(tb_data=get_tb_data(folder=os.path.join(basedir, filename)),
-                              config=get_config(filename=filename))
+            events_out_dir = os.path.join(basedir, seed_dir, subdir_name)
+            config = get_config(filename=seed_dir)
+            df = to_dataframe(tb_data=get_tb_data(events_out_dir=events_out_dir), config=config)
             dfs.append(df)
         except DataLossError:
-            logging.error(f"file {filename} had an error.")
+            logging.error(f"file {seed_dir} had an error.")
     full_df = pd.concat(dfs)
     full_df.to_csv(csv_filename, index=False)
+
+
+def dump_command_skills_csv(dirname: str):
+    events_out_dir = os.path.join(dirname, "SAC_1")
+    df = to_dataframe(tb_data=get_tb_data(events_out_dir=events_out_dir),
+                      config=Config(use_resampling_scheme=False, use_state_space_reduction=True, seed=0))
+    csv_fname = os.path.join(dirname, "gsc-results.csv")
+    df.to_csv(csv_fname, index=False)
+
+
+if __name__ == '__main__':
+    #dump_dads_csv(basedir="results/reach")
+    dump_dads_csv(basedir="modelsCommandSkills/reach/asGDADSTrue", subdir_name="SAC_1")
