@@ -5,9 +5,13 @@ from multi_goal.utils import get_updateable_scatter
 
 
 class DictInfoWrapper(Wrapper):
+    def __init__(self, env):
+        assert hasattr(env, "is_success")
+        super().__init__(env)
+
     def step(self, action):
         *step, _ = super().step(action)
-        return (*step, dict())
+        return (*step, dict(is_success=self.env.is_success()))
 
 
 class PlotGoalWrapper(Wrapper):
@@ -70,3 +74,7 @@ class DropGoalEnvsAbsoluteLocation(ObservationWrapper):
         return dict(observation=obs_without_abs_position,
                     desired_goal=desired_goal,
                     achieved_goal=achieved_goal)
+
+
+def distance_to_goal(dict_obs: dict):
+    return np.linalg.norm(np.subtract(dict_obs["achieved_goal"], dict_obs["desired_goal"]))

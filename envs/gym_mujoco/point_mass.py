@@ -21,7 +21,8 @@ import os
 from gym import utils, GoalEnv
 import numpy as np
 from gym.envs.mujoco import mujoco_env
-from envs.gym_mujoco.custom_wrappers import DictInfoWrapper, PlotGoalWrapper, DenseGoalWrapper
+from envs.gym_mujoco.custom_wrappers import DictInfoWrapper, PlotGoalWrapper, DenseGoalWrapper, \
+    distance_to_goal
 
 
 # pylint: disable=missing-docstring
@@ -130,6 +131,10 @@ class PointMassAsGoalEnv(PointMassEnv):
         return dict(achieved_goal=obs[:2],
                     desired_goal=self.goal.astype(np.float32),
                     observation=obs)
+
+    def is_success(self):
+        dict_obs = self._get_obs()
+        return float(distance_to_goal(dict_obs) < 0.5)
 
 
 if __name__ == '__main__':

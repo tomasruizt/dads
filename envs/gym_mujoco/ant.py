@@ -22,7 +22,8 @@ from gym import utils, GoalEnv
 import numpy as np
 from gym.envs.mujoco import mujoco_env
 
-from envs.gym_mujoco.custom_wrappers import PlotGoalWrapper, DenseGoalWrapper, DictInfoWrapper
+from envs.gym_mujoco.custom_wrappers import PlotGoalWrapper, DenseGoalWrapper, DictInfoWrapper, \
+    distance_to_goal
 
 
 def q_inv(a):
@@ -209,6 +210,10 @@ class AntAsGoalEnv(AntEnv):
     @property
     def goal(self):
         return self._goal
+
+    def is_success(self):
+        dict_obs = self._get_obs()
+        return float(distance_to_goal(dict_obs) < 0.5)
 
 
 def AntGoalEnv() -> GoalEnv:
