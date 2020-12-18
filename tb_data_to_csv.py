@@ -61,12 +61,13 @@ def to_dataframe(tb_data, config: Config) -> pd.DataFrame:
     tag_to_colname = [
         ("dads/reward", "PSEUDOREWARD"),
         ("DADS-MPC/rewards", "MPC_REWARD"),
-        ("dyn-train-goal-changing-transitions[%]", "TRANSITIONS_MOVING_GOAL[%]"),
-        ("dynamics-l2-error-moving-goal", "DYN_L2_ERROR_MOVING_GOAL"),
-        ("dynamics-l2-error-nonmoving", "DYN_L2_ERROR_NONMOVING_GOAL"),
+        ("dads/buffer-goal-changing-transitions[%]", "BUFFER-TRANSITIONS_MOVING_GOAL[%]"),
+        ("dads/dyn-train-goal-changing-transitions[%]", "DYNTRAIN-TRANSITIONS_MOVING_GOAL[%]"),
+        ("dads/dynamics-l2-error-moving-goal", "DYN_L2_ERROR_MOVING_GOAL"),
+        ("dads/dynamics-l2-error-nonmoving", "DYN_L2_ERROR_NONMOVING_GOAL"),
         ("DADS-MPC/is-success", "IS_SUCCESS"),
-        ("reward-moving", "PSEUDOREWARD_MOVING"),
-        ("reward-nonmoving", "PSEUDOREWARD_NONMOVING"),
+        ("dads/reward-moving", "PSEUDOREWARD_MOVING"),
+        ("dads/reward-nonmoving", "PSEUDOREWARD_NONMOVING"),
         ("rollout/ep_rew_reward", "NEW-PSEUDOREWARD")
     ]
     dfs = [tag_to_dataframe(tb_data, tag, colname) for tag, colname in tag_to_colname]
@@ -103,5 +104,5 @@ def dump_command_skills_csv(dirname: str):
 
 
 if __name__ == '__main__':
-    #dump_dads_csv(basedir="results/reach")
-    dump_dads_csv(basedir="modelsCommandSkills/reach/asGDADSTrue", subdir_name="SAC_1")
+    dump_dads_csv(basedir="results/2020-12-18-push-w-resampling")
+    #dump_dads_csv(basedir="modelsCommandSkills/reach/asGDADSTrue", subdir_name="SAC_1")

@@ -1,37 +1,54 @@
 library(data.table)
 library(ggplot2)
-library(tidyr)
 # svg aspect: 500px times 350px
 
 setwd("/tomasruiz/code/thesis/dads/")
-results <- fread("plot-results/dads-push/movement-cmp.csv")
+results <- fread("modelsCommandSkills/reach/asGDADSTrue/full-results.csv")
+results[, ITERATION := ITERATION / 500L]
 
 name <- function(goalSpace, resampling) {
     if (!goalSpace && !resampling)
         return("DADS")
-    if (goalSpace && resampling)
-        return("G-DADS")
+    if (resampling)
+        return("Resampling Scheme")
     if (goalSpace)
-        return("Control Goal Space")
-    return("Resampling Scheme")
+        return("Goal-Space Control")
 }
-results[["ABLATION"]] <- mapply(name, results$CONTROL_GOAL_SPACE, results$USE_RESAMPLING)
 trStr <- "TRANSITIONS_MOVING_GOAL[%]"
 
-means <- results[, .(VALUE = mean(VALUE), SD = sd(VALUE)),
-                 by=.(ITERATION, ABLATION, MEASUREMENT)]
+preprocess <- function(DT) {
+    DT[, ABLATION := mapply(name, CONTROL_GOAL_SPACE, USE_RESAMPLING)]
+    DT[, .(VALUE = mean(VALUE), SD = sd(VALUE)), by = .(ITERATION, ABLATION, MEASUREMENT)]
+}
+
+means <- preprocess(results)
+
 
 dadsReachResults <- function() {
     color <- "blue"
-    taskcompletion <- means[ABLATION == "DADS" & MEASUREMENT == "IS_SUCCESS"]
+    ablation <- "Goal-Space Control"
+    taskcompletion <- means[ABLATION == ablation & MEASUREMENT == "IS_SUCCESS"]
     taskcompletion <- taskcompletion[, .(ITERATION, COMPLETION=100*VALUE, SD=100*SD)]
     plotAvgTaskCompletion(DT = taskcompletion)
     print(mean(taskcompletion$COMPLETION))
 
-    intRew <- means[ABLATION == "DADS" & MEASUREMENT == "PSEUDOREWARD"]
+    intRew <- means[ABLATION == ablation & MEASUREMENT == "PSEUDOREWARD"]
     intRew <- intRew[, .(ITERATION, PSEUDOREWARD=VALUE, SD)]
     plotIntrinsicReward(DT = intRew, color = color)
     print(mean(intRew$PSEUDOREWARD))
+}
+avgTaskCompletionTitle <- "Average Task Completion [%]"
+
+cmpTaskCompletion <- function() {
+    cmp <- fread("plot-results/dads-reach/full-results.csv")
+    cmpMeans <- preprocess(cmp)
+    taskcompletion <- rbind(means, cmpMeans)[MEASUREMENT == "IS_SUCCESS"]
+    taskcompletion[, `:=`(COMPLETION=100*VALUE, SD=50*SD, ALGORITHM=ABLATION)]
+    ggplot(taskcompletion, aes(x = ITERATION, y = COMPLETION, color = ALGORITHM)) +
+        geom_line(size = 1) +
+        geom_ribbon(aes(ymax = COMPLETION + SD, ymin = COMPLETION - SD, fill = ALGORITHM), alpha = 0.3, color = NA) +
+        xlim(0, 51) + ylim(-10, 100) +
+        ggtitle(avgTaskCompletionTitle)
 }
 
 plotIntrinsicReward <- function(DT, color = "blue") {
@@ -75,18 +92,8 @@ ggplot(transData, aes(x = ITERATION, y = VALUE, color = ABLATION)) +
                 alpha = 0.3, color = NA) + ggtitle("Transitions that move the goal [%]") +
     ylim(-1, 100)
 
-pushComparePredictionErrorToIntrinsicReward <- function(){
-    errorData <- results[MEASUREMENT %like% "DYN_L2_ERROR" |
-                             MEASUREMENT %like% "PSEUDOREWARD_" & ABLATION == "DADS"]
-    errorData[MEASUREMENT %like% "NONMOVING", `Transition Type` := "static"]
-    errorData[!(MEASUREMENT %like% "NONMOVING"), `Transition Type` := "moving"]
-    errorData[MEASUREMENT %like% "DYN_L2_ERROR", METRIC := "Dynamics Prediction Error"]
-    errorData[!(MEASUREMENT %like% "DYN_L2_ERROR"), METRIC := "Intrinsic Reward"]
-    errorData$METRIC <- factor(errorData$METRIC, levels = c("Dynamics Prediction Error", "Intrinsic Reward"))
-    errorData <- errorData[, .(ITERATION, SEED, VALUE, `Transition Type`, METRIC)]
-    ggplot(errorData, aes(x = ITERATION, y = VALUE, color = `Transition Type`)) +
-        facet_wrap(vars(METRIC), scales = "free") +
-        ylab("") +
-        geom_point(size = 1, alpha = 0.6) +
-        ggtitle("Avoidance of unpredictable Transitions")
-}
+errorData <- results[MEASUREMENT %like% "DYN_L2_ERROR" & ABLATION == "DADS"]
+errorData[MEASUREMENT == "DYN_L2_ERROR_MOVING_GOAL", MEASUREMENT := "Moving transitions"]
+errorData[MEASUREMENT == "DYN_L2_ERROR_NONMOVING_GOAL", MEASUREMENT := "Non-moving transitions"]
+ggplot(errorData, aes(x = ITERATION, y = VALUE, color = MEASUREMENT)) +
+    geom_point(size = 1) + ggtitle("DADS Dynamics Mean Squared Error")
