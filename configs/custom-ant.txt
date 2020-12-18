@@ -1,6 +1,6 @@
---environment=pointmass
---max_env_steps=150
---max_env_steps_eval=150
+--environment=custom_ant
+--max_env_steps=200
+--max_env_steps_eval=200
 
 --run_train=1
 --num_skills=2
@@ -13,20 +13,20 @@
 --record_freq=25
 --num_evals=0
 --per_skill_evals=1
---num_epochs=501
+--num_epochs=5001
 
 --replay_buffer_capacity=10000
 --initial_collect_steps=2000
---collect_steps=600
+--collect_steps=500
 --resample_prob=1
---steps_before_resample=75
+--steps_before_resample=100
 
 --num_components=1
 --skill_dyn_train_steps=16
 --skill_dyn_batch_size=256
 --agent_train_steps=64
 --agent_batch_size=256
---hidden_layer_size=256
+--hidden_layer_size=512
 
 # Sparse-like environment
 --mpc_eval_freq=10
