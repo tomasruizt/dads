@@ -26,3 +26,4 @@ modelsCommandSkills/
 demo*
 replay.sh
 .Rproj.user
+plot-results/raw-data/
