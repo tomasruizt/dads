@@ -2,6 +2,8 @@ import logging
 import os
 import warnings
 from typing import Any, Callable, Tuple, NamedTuple, List
+
+import click
 import pandas as pd
 from tensorflow.python.framework.errors_impl import DataLossError
 from tensorflow.python.summary.summary_iterator import summary_iterator
@@ -103,6 +105,13 @@ def dump_command_skills_csv(dirname: str):
     df.to_csv(csv_fname, index=False)
 
 
+@click.command()
+@click.option("--basedir", help="Root of the common tensorboard directories")
+@click.option("--subdir", default="train", help="Name of the tb subdirectory")
+def cli(basedir: str, subdir):
+    dump_dads_csv(basedir=basedir, subdir_name=subdir)
+
+
 if __name__ == '__main__':
-    dump_dads_csv(basedir="results/2020-12-18-push-w-resampling")
-    #dump_dads_csv(basedir="modelsCommandSkills/reach/asGDADSTrue", subdir_name="SAC_1")
+    cli()
+
