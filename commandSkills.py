@@ -40,7 +40,6 @@ class Conf(NamedTuple):
     lr: float = 3e-4
     skill_dim: int = None
     reward_scaling: float = 1.0
-    collect_steps: int = 500
     layer_size: int = 256
     buffer_size: int = 10_000
 
@@ -65,7 +64,7 @@ CONFS = dict(
     point2d=Conf(ep_len=30, num_episodes=50, lr=0.01),
     reach=Conf(ep_len=50, num_episodes=10*50),
     push=Conf(ep_len=50, num_episodes=1000, skill_dim=2),
-    pointmass=Conf(ep_len=150, collect_steps=600, num_episodes=300, reward_scaling=1/100, lr=0.001),
+    pointmass=Conf(ep_len=150, num_episodes=4*500, reward_scaling=1/50, lr=0.001),
     ant=Conf(ep_len=400, num_episodes=2000, reward_scaling=1/50)
 )
 
@@ -104,7 +103,7 @@ class EvalCallbackSuccess(EventCallback):
 
 def eval_cb(env, conf: Conf):
     return EvalCallbackSuccess(eval_env=env, conf=conf, log_path="modelsCommandSkills",
-                               eval_freq=5*conf.ep_len, n_eval_episodes=0)
+                               eval_freq=10*conf.ep_len, n_eval_episodes=40)
 
 
 def get_env(name: str, drop_abs_position: bool):
@@ -160,8 +159,10 @@ def parallel_main(args):
 
 
 if __name__ == '__main__':
-    num_seeds = 1
-    do_render = True
+    num_seeds = 5
+    do_render = False
     args = product([do_render], range(num_seeds))
+    if num_seeds == 1:
+        main(*args)
     with Pool() as pool:
         pool.map(parallel_main, args)
