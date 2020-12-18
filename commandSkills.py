@@ -64,7 +64,7 @@ CONFS = dict(
     point2d=Conf(ep_len=30, num_episodes=50, lr=0.01),
     reach=Conf(ep_len=50, num_episodes=10*50),
     push=Conf(ep_len=50, num_episodes=1000, skill_dim=2),
-    pointmass=Conf(ep_len=150, num_episodes=4*500, reward_scaling=1/50, lr=0.001),
+    pointmass=Conf(ep_len=150, num_episodes=4*500, reward_scaling=1/100),
     ant=Conf(ep_len=400, num_episodes=2000, reward_scaling=1/50)
 )
 
@@ -144,8 +144,8 @@ def main(render=True, seed=0):
             flat_env.load(filename)
     else:
         sac = SAC("MlpPolicy", env=flat_env, verbose=1, learning_rate=conf.lr,
-                  tensorboard_log=filename, buffer_size=conf.buffer_size, gamma=0.995,
-                  learning_starts=4*conf.ep_len, policy_kwargs=dict(net_arch=[conf.layer_size] * 2),
+                  tensorboard_log=filename, buffer_size=conf.buffer_size, gamma=0.99,
+                  learning_starts=4*conf.ep_len, policy_kwargs=dict(net_arch=[conf.layer_size]*2),
                   seed=seed, device="cpu")
         train(model=sac, conf=conf, save_fname=filename, eval_env=eval_env)
         if as_gdads:
@@ -159,7 +159,7 @@ def parallel_main(args):
 
 
 if __name__ == '__main__':
-    num_seeds = 5
+    num_seeds = 4
     do_render = False
     args = product([do_render], range(num_seeds))
     if num_seeds == 1:
