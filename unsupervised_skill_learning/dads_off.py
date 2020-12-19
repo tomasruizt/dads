@@ -34,7 +34,7 @@ from custom_mppi import MPPISkillProvider, SimpleDynamics
 from density_estimation import DensityEstimator
 from envs.custom_envs import make_fetch_pick_and_place_env, make_fetch_slide_env, \
     make_point2d_dads_env, make_fetch_reach_env, DADSEnv, make_fetch_push_env, \
-    make_point_mass_env
+    make_point_mass_env, make_ant_dads_env
 from lib.simple_buffer import SimpleBuffer, Transition
 from skill_dynamics import SkillDynamics, l2
 from unsupervised_skill_learning.common_funcs import process_observation_given, \
@@ -269,7 +269,8 @@ custom_envs_ctors = dict(
     push=make_fetch_push_env,
     pickandplace=make_fetch_pick_and_place_env,
     slide=make_fetch_slide_env,
-    pointmass=make_point_mass_env
+    pointmass=make_point_mass_env,
+    custom_ant=make_ant_dads_env
 )
 
 
