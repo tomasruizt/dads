@@ -101,9 +101,9 @@ class SkillWrapper(Wrapper):
         self._goal_deltas_stats = [Statistics([1e-6]) for _ in range(self._skill_dim)]
 
     def _normalize(self, delta):
-        μs, σs, maxs = self.get_deltas_statistics()
+        _, σs, maxs = self.get_deltas_statistics()
         ns = [np.mean((σ, m)) for σ, m in zip(σs, maxs)]
-        return np.asarray([(d-μ)/n for (d, μ, n) in zip(delta, μs, ns)])
+        return np.asarray([d/n for d, n in zip(delta, ns)])
 
     def get_deltas_statistics(self) -> Tuple:
         μs = [s.mean() for s in self._goal_deltas_stats]
@@ -204,7 +204,7 @@ class LogDeltaStatistics(EveryNTimesteps):
 
     def _on_event(self) -> bool:
         μs, σs, maxs = self.training_env.envs[0].get_deltas_statistics()
-        self.logger.record("deltas-stats/max(μs)", np.max(μs))
+        self.logger.record("deltas-stats/max(abs(μs))", np.max(np.abs(μs)))
         self.logger.record("deltas-stats/min(σs)", np.min(σs))
         self.logger.record("deltas-stats/max(deltas)", np.max(maxs))
         return True
