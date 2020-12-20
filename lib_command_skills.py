@@ -1,6 +1,6 @@
 import logging
 import pickle
-from typing import Generator
+from typing import Generator, Tuple
 
 import gym
 import numpy as np
@@ -9,7 +9,8 @@ from gym.wrappers import FlattenObservation, FilterObservation
 from runstats import Statistics
 from scipy.stats import multivariate_normal as mvn
 from stable_baselines3.common.buffers import ReplayBuffer
-from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, \
+    EveryNTimesteps
 
 from solvability import ForHER
 
@@ -30,8 +31,8 @@ class MutualInfoStrategy:
         log["p(g'|z,g)"] = self._mi_numerator(delta=goal_delta, skill=skill)
         log["p(g'|g)"] = self._mi_denominator(delta=goal_delta)
         mutual_info = log["p(g'|z,g)"] - log["p(g'|g)"]
-        if mutual_info < -10:
-            logging.warning(str((mutual_info, log["p(g'|z,g)"], log["p(g'|g)"])))
+        if mutual_info < -20:
+            logging.warning("Low Mutual Info %s" % str((mutual_info, log["p(g'|z,g)"], log["p(g'|g)"])))
         return mutual_info
 
     def choose_skill(self, desired_delta: np.ndarray) -> np.ndarray:
@@ -100,9 +101,15 @@ class SkillWrapper(Wrapper):
         self._goal_deltas_stats = [Statistics([1e-6]) for _ in range(self._skill_dim)]
 
     def _normalize(self, delta):
+        μs, σs, maxs = self.get_deltas_statistics()
+        ns = [np.mean((σ, m)) for σ, m in zip(σs, maxs)]
+        return np.asarray([(d-μ)/n for (d, μ, n) in zip(delta, μs, ns)])
+
+    def get_deltas_statistics(self) -> Tuple:
         μs = [s.mean() for s in self._goal_deltas_stats]
         σs = [s.stddev() for s in self._goal_deltas_stats]
-        return np.asarray([(d-μ)/σ for (d, μ, σ) in zip(delta, μs, σs)])
+        maxs = [s.maximum() for s in self._goal_deltas_stats]
+        return μs, σs, maxs
 
     def step(self, action):
         dict_obs, _, done, info = self.env.step(action)
@@ -119,8 +126,11 @@ class SkillWrapper(Wrapper):
         goal_delta = (cur_diff - last_diff)[:self._skill_dim]
         for s, d in zip(self._goal_deltas_stats, goal_delta):
             s.push(d)
-        return self.strategy.get_mutual_info(goal_delta=self._normalize(goal_delta),
-                                             skill=self._cur_skill)
+        mi = self.strategy.get_mutual_info(goal_delta=self._normalize(goal_delta),
+                                           skill=self._cur_skill)
+        if mi < -100:
+            logging.warning(f"Mutual information very low: {mi}. Clipping it to -100")
+        return max(mi, -100)
 
     def reset(self, **kwargs):
         self._cur_skill = self.strategy.sample_skill()
@@ -188,20 +198,15 @@ def set_skills(obs: np.ndarray, skills: np.ndarray) -> None:
     obs[:, -idx:] = skills
 
 
-class AddExpCallback(BaseCallback):
-    def __init__(self, num_added_samples: int, verbose: int = 0):
-        super().__init__(verbose)
-        self.num_added_samples = num_added_samples
+class LogDeltaStatistics(EveryNTimesteps):
+    def __init__(self, n_steps: int, callback: BaseCallback = None):
+        super().__init__(n_steps, callback)
 
-    def _on_step(self) -> bool:
-        buffer: ReplayBuffer = self.model.replay_buffer
-        can_sample = buffer.size() > 0
-        if not can_sample:
-            return True
-        samples = buffer.sample(self.num_added_samples)
-        wrapper: SkillWrapper = self.training_env.envs[0]
-        new_samples = wrapper.relabel(**{k:v.cpu().numpy() for k, v in samples._asdict().items()})
-        buffer.extend(*new_samples)
+    def _on_event(self) -> bool:
+        μs, σs, maxs = self.training_env.envs[0].get_deltas_statistics()
+        self.logger.record("deltas-stats/max(μs)", np.max(μs))
+        self.logger.record("deltas-stats/min(σs)", np.min(σs))
+        self.logger.record("deltas-stats/max(deltas)", np.max(maxs))
         return True
 
 

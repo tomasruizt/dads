@@ -7,7 +7,7 @@ from itertools import product
 import torch
 
 from lib_command_skills import SkillWrapper, GDADSEvalWrapper, as_dict_env, \
-    eval_inflen_dict_env, flatten_env
+    eval_inflen_dict_env, flatten_env, LogDeltaStatistics
 from envs.gym_mujoco.custom_wrappers import DropGoalEnvsAbsoluteLocation
 
 torch.set_num_threads(2)
@@ -55,8 +55,8 @@ def show(model, env, conf: Conf):
 
 
 def train(model: SAC, conf: Conf, save_fname: str, eval_env):
-    model.learn(total_timesteps=conf.ep_len * conf.num_episodes, log_interval=10,
-                callback=[eval_cb(env=eval_env, conf=conf)])
+    model.learn(total_timesteps=conf.ep_len * conf.num_episodes,
+                callback=[eval_cb(env=eval_env, conf=conf), LogDeltaStatistics(n_steps=conf.ep_len)])
     model.save(save_fname)
 
 
@@ -65,7 +65,8 @@ CONFS = dict(
     reach=Conf(ep_len=50, num_episodes=10*50),
     push=Conf(ep_len=50, num_episodes=1000, skill_dim=2),
     pointmass=Conf(ep_len=150, num_episodes=4*500, reward_scaling=1/100),
-    ant=Conf(ep_len=400, num_episodes=2000, reward_scaling=1/50)
+    ant=Conf(ep_len=200, num_episodes=500, reward_scaling=1/100,
+             layer_size=512, buffer_size=1_000_000)
 )
 
 
@@ -119,7 +120,7 @@ def get_env(name: str, drop_abs_position: bool):
 
 def main(render=True, seed=0):
     as_gdads = True
-    name = "pointmass"
+    name = "ant"
     drop_abs_position = True
 
     conf: Conf = CONFS[name]
@@ -147,6 +148,8 @@ def main(render=True, seed=0):
                   tensorboard_log=filename, buffer_size=conf.buffer_size, gamma=0.99,
                   learning_starts=4*conf.ep_len, policy_kwargs=dict(net_arch=[conf.layer_size]*2),
                   seed=seed, device="cpu")
+    do_train = True
+    if do_train:
         train(model=sac, conf=conf, save_fname=filename, eval_env=eval_env)
         if as_gdads:
             flat_env.save(filename)
@@ -159,8 +162,8 @@ def parallel_main(args):
 
 
 if __name__ == '__main__':
-    num_seeds = 4
-    do_render = False
+    num_seeds = 1
+    do_render = True
     args = product([do_render], range(num_seeds))
     if num_seeds == 1:
         main(*args)
