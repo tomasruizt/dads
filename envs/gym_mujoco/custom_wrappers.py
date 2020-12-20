@@ -33,6 +33,7 @@ class PlotGoalWrapper(Wrapper):
         obs = getattr(self.env, "_get_obs")()
         scatter(name="achieved_goal", pts=obs["achieved_goal"])
         scatter(name="desired_goal", pts=obs["desired_goal"])
+        fig.tight_layout()
         fig.canvas.draw()
         fig.canvas.flush_events()
 

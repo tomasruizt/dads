@@ -137,13 +137,29 @@ class PointMassAsGoalEnv(PointMassEnv):
         return float(distance_to_goal(dict_obs) < 0.5)
 
 
+def _perfect_action(dict_obs):
+    cur_orientation_rad = dict_obs["observation"][2] % (2*np.pi)
+    cur_dir = np.asarray([np.cos(cur_orientation_rad), np.sin(cur_orientation_rad)])
+    target_dir = dict_obs["desired_goal"] - dict_obs["achieved_goal"]
+    target_orientation_rad = np.arctan2(target_dir[1], target_dir[0])
+    if target_orientation_rad < 0:
+        target_orientation_rad += 2*np.pi
+
+    point_in_same_dir = 0 <= cur_dir @ target_dir
+    move = 1.0 if point_in_same_dir else -1.0
+
+    orientation_change = target_orientation_rad - cur_orientation_rad
+    return [move, 0.1*orientation_change]
+
+
 if __name__ == '__main__':
     env = PointMassGoalEnv()
     print(env.action_space)
     print(env.observation_space)
+    print(env.reset())
     while True:
         obs = env.reset()
-        while True:
+        for _ in range(150):
             env.render("human")
-            action = env.action_space.sample()
-            obs = env.step(action)
+            action = _perfect_action(obs)
+            obs, *_ = env.step(action)
