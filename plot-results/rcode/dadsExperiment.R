@@ -3,7 +3,7 @@ library(ggplot2)
 # svg aspect: 500px times 350px
 
 setwd("/tomasruiz/code/thesis/dads/")
-results <- fread("plot-results/raw-data/dads-push/push-w-resampling.csv")
+results <- fread("plot-results/raw-data/pointmass/dads.csv")
 #results[, ITERATION := ITERATION / 500L]
 
 name <- function(goalSpace, resampling) {
@@ -36,18 +36,18 @@ dadsReachResults <- function() {
     plotIntrinsicReward(DT = intRew, color = color)
     print(mean(intRew$PSEUDOREWARD))
 }
-avgTaskCompletionTitle <- "Average Task Completion [%]"
 
 cmpTaskCompletion <- function() {
-    cmp <- fread("plot-results/dads-reach/full-results.csv")
+    cmp <- fread("plot-results/raw-data/pointmass/gsc.csv")
+    cmp[, ITERATION := ITERATION / 600]
     cmpMeans <- preprocess(cmp)
     taskcompletion <- rbind(means, cmpMeans)[MEASUREMENT == "IS_SUCCESS"]
     taskcompletion[, `:=`(COMPLETION=100*VALUE, SD=50*SD, ALGORITHM=ABLATION)]
     ggplot(taskcompletion, aes(x = ITERATION, y = COMPLETION, color = ALGORITHM)) +
         geom_line(size = 1) +
         geom_ribbon(aes(ymax = COMPLETION + SD, ymin = COMPLETION - SD, fill = ALGORITHM), alpha = 0.3, color = NA) +
-        xlim(0, 51) + ylim(-10, 100) +
-        ggtitle(avgTaskCompletionTitle)
+        ylim(-10, 100) +
+        ggtitle("Average Task Completion [%]")
 }
 
 plotIntrinsicReward <- function(DT, color = "blue") {
