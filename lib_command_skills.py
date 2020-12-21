@@ -8,7 +8,6 @@ from gym import Wrapper, GoalEnv
 from gym.wrappers import FlattenObservation, FilterObservation
 from runstats import Statistics
 from scipy.stats import multivariate_normal as mvn
-from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, \
     EveryNTimesteps
 

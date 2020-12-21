@@ -10,8 +10,8 @@ from lib_command_skills import SkillWrapper, GDADSEvalWrapper, as_dict_env, \
     eval_inflen_dict_env, flatten_env, LogDeltaStatistics
 from envs.gym_mujoco.custom_wrappers import DropGoalEnvsAbsoluteLocation
 
-torch.set_num_threads(2)
-torch.set_num_interop_threads(2)
+torch.set_num_threads(6)
+torch.set_num_interop_threads(6)
 from stable_baselines3 import SAC
 import numpy as np
 from stable_baselines3.common.callbacks import EventCallback
@@ -63,10 +63,12 @@ def train(model: SAC, conf: Conf, save_fname: str, eval_env):
 CONFS = dict(
     point2d=Conf(ep_len=30, num_episodes=50, lr=0.01),
     reach=Conf(ep_len=50, num_episodes=10*50),
-    push=Conf(ep_len=50, num_episodes=1000, skill_dim=2),
-    pointmass=Conf(ep_len=150, num_episodes=4*500, reward_scaling=1/100),
-    ant=Conf(ep_len=200, num_episodes=500, reward_scaling=1/100,
-             layer_size=512, buffer_size=1_000_000)
+    push=Conf(ep_len=50, num_episodes=6*1000, skill_dim=2, layer_size=512, buffer_size=100_000,
+              reward_scaling=1/10),
+    pointmass=Conf(ep_len=150, num_episodes=4*500, reward_scaling=1/100,
+                   buffer_size=100_000),
+    ant=Conf(ep_len=200, num_episodes=4*1500, reward_scaling=1/50,
+             layer_size=512, buffer_size=100_000)
 )
 
 
@@ -104,7 +106,7 @@ class EvalCallbackSuccess(EventCallback):
 
 def eval_cb(env, conf: Conf):
     return EvalCallbackSuccess(eval_env=env, conf=conf, log_path="modelsCommandSkills",
-                               eval_freq=10*conf.ep_len, n_eval_episodes=40)
+                               eval_freq=15*4*conf.ep_len, n_eval_episodes=40)
 
 
 def get_env(name: str, drop_abs_position: bool):
@@ -120,8 +122,8 @@ def get_env(name: str, drop_abs_position: bool):
 
 def main(render=True, seed=0):
     as_gdads = True
-    name = "ant"
-    drop_abs_position = True
+    name = "push"
+    drop_abs_position = False
 
     conf: Conf = CONFS[name]
     dict_env = get_env(name=name, drop_abs_position=drop_abs_position)
@@ -163,9 +165,9 @@ def parallel_main(args):
 
 if __name__ == '__main__':
     num_seeds = 1
-    do_render = True
+    do_render = False
     args = product([do_render], range(num_seeds))
     if num_seeds == 1:
         main(*args)
-    with Pool() as pool:
+    with Pool(processes=1) as pool:
         pool.map(parallel_main, args)
