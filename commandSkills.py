@@ -38,7 +38,7 @@ envs_fns = dict(
 class Conf(NamedTuple):
     ep_len: int
     num_episodes: int
-    eval_freq: int = 50
+    eval_freq_in_episodes: int = 50
     lr: float = 3e-4
     skill_dim: int = None
     reward_scaling: float = 1.0
@@ -63,12 +63,12 @@ def train(model: SAC, conf: Conf, save_fname: str, eval_env):
 
 
 CONFS = dict(
-    point2d=Conf(ep_len=30, num_episodes=100, lr=0.01, eval_freq=100),
+    point2d=Conf(ep_len=30, num_episodes=100, lr=0.01, eval_freq_in_episodes=25),
     reach=Conf(ep_len=50, num_episodes=10*50),
     push=Conf(ep_len=50, num_episodes=6*1000, skill_dim=2, layer_size=512, buffer_size=100_000,
               reward_scaling=1/10),
-    pointmass=Conf(ep_len=50, num_episodes=4*50, eval_freq=25, buffer_size=10_000, lr=0.001),
-    ant=Conf(ep_len=200, num_episodes=4*1500, eval_freq=60, layer_size=512, buffer_size=100_000)
+    pointmass=Conf(ep_len=50, num_episodes=4*50, eval_freq_in_episodes=25, buffer_size=10_000, lr=0.001),
+    ant=Conf(ep_len=200, num_episodes=4*1500, eval_freq_in_episodes=60, layer_size=512, buffer_size=100_000)
 )
 
 
@@ -106,7 +106,7 @@ class EvalCallbackSuccess(EventCallback):
 
 def eval_cb(env, conf: Conf):
     return EvalCallbackSuccess(eval_env=env, conf=conf, log_path="modelsCommandSkills",
-                               eval_freq=conf.eval_freq, n_eval_episodes=40)
+                               eval_freq=conf.eval_freq_in_episodes*conf.ep_len, n_eval_episodes=40)
 
 
 def get_env(name: str, drop_abs_position: bool):
@@ -121,7 +121,7 @@ def get_env(name: str, drop_abs_position: bool):
     return dict_env
 
 
-def main(render=True, seed=0, as_gdads=False, name="point2d"):
+def main(do_render: bool, seed: int, as_gdads: bool, name: str, do_train: bool):
     drop_abs_position = True
 
     conf: Conf = CONFS[name]
@@ -149,12 +149,11 @@ def main(render=True, seed=0, as_gdads=False, name="point2d"):
                   tensorboard_log=filename, buffer_size=conf.buffer_size, gamma=1,
                   learning_starts=4*conf.ep_len, policy_kwargs=dict(net_arch=[conf.layer_size]*2),
                   seed=seed, device="cuda")
-    do_train = True
     if do_train:
         train(model=sac, conf=conf, save_fname=filename, eval_env=eval_env)
         if as_gdads:
             flat_env.save(filename)
-    if render:
+    if do_render:
         show(model=sac, env=eval_env, conf=conf)
 
 
@@ -164,12 +163,13 @@ def parallel_main(args):
 
 if __name__ == '__main__':
     experiment = "point2d"
-    do_render = True
-    num_seeds = 1
-    as_gdads = [True]
+    render = True
+    do_train = False
+    seeds = [0, 1]
+    as_gdads = [False]
 
-    args = product([do_render], range(num_seeds), as_gdads, [experiment])
-    if num_seeds == 1:
-        main(*args)
-    with Pool(processes=1) as pool:
+    args = list(product([render], seeds, as_gdads, [experiment], [do_train]))
+    if len(args) == 1:
+        main(*args[0])
+    with Pool(processes=2) as pool:
         pool.map(parallel_main, args)
