@@ -4,8 +4,10 @@ from typing import Generator, Tuple
 
 import gym
 import numpy as np
+import torch
 from gym import Wrapper, GoalEnv
 from gym.wrappers import FlattenObservation, FilterObservation
+from pytorch_mppi.mppi import MPPI
 from runstats import Statistics
 from scipy.stats import multivariate_normal as mvn
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, \
@@ -67,7 +69,7 @@ class MVNStrategy(MutualInfoStrategy):
         super().__init__(skill_dim)
         self.cov = cov = {
             "z": np.eye(self._skill_dim),
-            "g'|z,g": 0.1 * np.eye(self._skill_dim)
+            "g'|z,g": np.eye(self._skill_dim)
         }
         # Integration of two gaussians <-> convolution <-> sum of two gaussian RVs.
         cov["g'|g"] = cov["z"] + cov["g'|z,g"]
@@ -103,6 +105,11 @@ class SkillWrapper(Wrapper):
         _, σs, maxs = self.get_deltas_statistics()
         ns = [np.mean((σ, m)) for σ, m in zip(σs, maxs)]
         return np.asarray([d/n for d, n in zip(delta, ns)])
+
+    def _denormalize(self, skill):
+        _, σs, maxs = self.get_deltas_statistics()
+        ns = [np.mean((σ, m)) for σ, m in zip(σs, maxs)]
+        return skill * np.asarray(ns)
 
     def get_deltas_statistics(self) -> Tuple:
         μs = [s.mean() for s in self._goal_deltas_stats]
@@ -167,6 +174,35 @@ class SkillWrapper(Wrapper):
         return new_obs, new_next_obs, actions, rewards, dones
 
 
+class BestSkillProvider:
+    def __init__(self, env):
+        self._env = env
+        self.observation_space = env.observation_space
+        self._planner = MPPI(dynamics=self._dynamics_fn,
+                             running_cost=self._cost_fn,
+                             nx=env.dyn_obs_dim(),
+                             num_samples=500,
+                             noise_sigma=0.1*torch.eye(env.dyn_obs_dim()), device="cpu",
+                             horizon=5, lambda_=1e-6)
+
+    def best_skill_for(self, dict_obs: dict) -> np.ndarray:
+        relative_goal = dict_obs["achieved_goal"] - dict_obs["desired_goal"]
+        return self._planner.command(state=relative_goal)
+
+    def reset(self):
+        self._planner.reset()
+
+    def _dynamics_fn(self, relative_goal, actions):
+        delta = self._env.env.env._denormalize(actions)
+        return relative_goal + delta
+
+    def _cost_fn(self, relative_goal, actions):
+        next_rel_goal = self._dynamics_fn(relative_goal, actions)
+        potential = next_rel_goal.norm(dim=1) - relative_goal.norm(dim=1)
+        assert len(relative_goal) == len(potential), (relative_goal.shape, potential.shape)
+        return potential
+
+
 class GDADSEvalWrapper(Wrapper):
     def __init__(self, dict_env, sw: SkillWrapper):
         super().__init__(dict_env)
@@ -202,7 +238,10 @@ class LogDeltaStatistics(EveryNTimesteps):
         super().__init__(n_steps, callback)
 
     def _on_event(self) -> bool:
-        μs, σs, maxs = self.training_env.envs[0].get_deltas_statistics()
+        try:
+            μs, σs, maxs = self.training_env.envs[0].get_deltas_statistics()
+        except AttributeError:
+            return True
         self.logger.record("deltas-stats/max(abs(μs))", np.max(np.abs(μs)))
         self.logger.record("deltas-stats/min(σs)", np.min(σs))
         self.logger.record("deltas-stats/max(deltas)", np.max(maxs))

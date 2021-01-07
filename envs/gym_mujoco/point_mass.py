@@ -68,8 +68,8 @@ class PointMassEnv(mujoco_env.MujocoEnv, utils.EzPickle):
       ori = qpos[2]
       dx = math.cos(ori) * force
       dy = math.sin(ori) * force
-      qpos[0] = np.clip(qpos[0] + dx, -self._lims, self._lims)
-      qpos[1] = np.clip(qpos[1] + dy, -self._lims, self._lims)
+      qpos[0] = np.clip(qpos[0] + dx, -2*self._lims, 2*self._lims)
+      qpos[1] = np.clip(qpos[1] + dy, -2*self._lims, 2*self._lims)
       qvel = self.sim.data.qvel.flat.copy()
       self.set_state(qpos, qvel)
 
@@ -113,7 +113,7 @@ class PointMassEnv(mujoco_env.MujocoEnv, utils.EzPickle):
 
 
 def PointMassGoalEnv() -> GoalEnv:
-    goal_limit = 20
+    goal_limit = 5
     env = PointMassAsGoalEnv(goal_limits=goal_limit)
     env = PlotGoalWrapper(env, goal_limit=goal_limit)
     env = DenseGoalWrapper(env)

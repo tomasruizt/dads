@@ -7,7 +7,7 @@ from itertools import product
 import torch
 
 from lib_command_skills import SkillWrapper, GDADSEvalWrapper, as_dict_env, \
-    eval_inflen_dict_env, flatten_env, LogDeltaStatistics
+    eval_inflen_dict_env, flatten_env, LogDeltaStatistics, BestSkillProvider
 from envs.gym_mujoco.custom_wrappers import DropGoalEnvsAbsoluteLocation
 
 torch.set_num_threads(6)
@@ -16,6 +16,7 @@ from stable_baselines3 import SAC
 import numpy as np
 from stable_baselines3.common.callbacks import EventCallback
 from stable_baselines3.common.monitor import Monitor
+from solvability import TimeFeature
 
 import matplotlib
 matplotlib.use('TkAgg')
@@ -37,6 +38,7 @@ envs_fns = dict(
 class Conf(NamedTuple):
     ep_len: int
     num_episodes: int
+    eval_freq: int = 50
     lr: float = 3e-4
     skill_dim: int = None
     reward_scaling: float = 1.0
@@ -61,14 +63,12 @@ def train(model: SAC, conf: Conf, save_fname: str, eval_env):
 
 
 CONFS = dict(
-    point2d=Conf(ep_len=30, num_episodes=50, lr=0.01),
+    point2d=Conf(ep_len=30, num_episodes=100, lr=0.01, eval_freq=100),
     reach=Conf(ep_len=50, num_episodes=10*50),
     push=Conf(ep_len=50, num_episodes=6*1000, skill_dim=2, layer_size=512, buffer_size=100_000,
               reward_scaling=1/10),
-    pointmass=Conf(ep_len=150, num_episodes=4*500, reward_scaling=1/100,
-                   buffer_size=100_000),
-    ant=Conf(ep_len=200, num_episodes=4*1500, reward_scaling=1/50,
-             layer_size=512, buffer_size=100_000)
+    pointmass=Conf(ep_len=50, num_episodes=4*50, eval_freq=25, buffer_size=10_000, lr=0.001),
+    ant=Conf(ep_len=200, num_episodes=4*1500, eval_freq=60, layer_size=512, buffer_size=100_000)
 )
 
 
@@ -101,12 +101,12 @@ class EvalCallbackSuccess(EventCallback):
             rewards.append(np.mean([rew for rew, _ in results]))
             successes.append(results[-1][1]["is_success"])
         self.logger.record("DADS-MPC/is-success", np.mean(successes))
-        self.logger.record("DADS-MPC/rewards", np.mean(rewards))
+        self.logger.record("DADS-MPC/ep-mean-reward", np.mean(rewards))
 
 
 def eval_cb(env, conf: Conf):
     return EvalCallbackSuccess(eval_env=env, conf=conf, log_path="modelsCommandSkills",
-                               eval_freq=15*4*conf.ep_len, n_eval_episodes=40)
+                               eval_freq=conf.eval_freq, n_eval_episodes=40)
 
 
 def get_env(name: str, drop_abs_position: bool):
@@ -115,15 +115,14 @@ def get_env(name: str, drop_abs_position: bool):
 
     dict_env = as_dict_env(dads_env_fn())
     dict_env = TimeLimit(dict_env, max_episode_steps=conf.ep_len)
+    dict_env = TimeFeature(dict_env)
     if drop_abs_position:
         dict_env = DropGoalEnvsAbsoluteLocation(dict_env)
     return dict_env
 
 
-def main(render=True, seed=0):
-    as_gdads = True
-    name = "push"
-    drop_abs_position = False
+def main(render=True, seed=0, as_gdads=False, name="point2d"):
+    drop_abs_position = True
 
     conf: Conf = CONFS[name]
     dict_env = get_env(name=name, drop_abs_position=drop_abs_position)
@@ -136,7 +135,7 @@ def main(render=True, seed=0):
 
     dict_env = get_env(name=name, drop_abs_position=drop_abs_position)
     if as_gdads:
-        eval_env = GDADSEvalWrapper(dict_env, sw=flat_env)
+        eval_env = GDADSEvalWrapper(dict_env, sw=BestSkillProvider(flat_env))
     else:
         eval_env = flatten_env(dict_env=dict_env, drop_abs_position=drop_abs_position)
 
@@ -147,9 +146,9 @@ def main(render=True, seed=0):
             flat_env.load(filename)
     else:
         sac = SAC("MlpPolicy", env=flat_env, verbose=1, learning_rate=conf.lr,
-                  tensorboard_log=filename, buffer_size=conf.buffer_size, gamma=0.99,
+                  tensorboard_log=filename, buffer_size=conf.buffer_size, gamma=1,
                   learning_starts=4*conf.ep_len, policy_kwargs=dict(net_arch=[conf.layer_size]*2),
-                  seed=seed, device="cpu")
+                  seed=seed, device="cuda")
     do_train = True
     if do_train:
         train(model=sac, conf=conf, save_fname=filename, eval_env=eval_env)
@@ -164,9 +163,12 @@ def parallel_main(args):
 
 
 if __name__ == '__main__':
+    experiment = "point2d"
+    do_render = True
     num_seeds = 1
-    do_render = False
-    args = product([do_render], range(num_seeds))
+    as_gdads = [True]
+
+    args = product([do_render], range(num_seeds), as_gdads, [experiment])
     if num_seeds == 1:
         main(*args)
     with Pool(processes=1) as pool:
