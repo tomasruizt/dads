@@ -192,6 +192,8 @@ class AntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
 
 
 class AntAsGoalEnv(AntEnv):
+    IS_ANT = True
+
     def __init__(self, limits: float):
         goal = np.random.uniform(-limits, limits, size=2)
         super().__init__(task="goal", expose_all_qpos=True, goal=goal)
@@ -213,11 +215,11 @@ class AntAsGoalEnv(AntEnv):
 
     def is_success(self):
         dict_obs = self._get_obs()
-        return float(distance_to_goal(dict_obs) < 0.5)
+        return float(distance_to_goal(dict_obs) < 1)
 
 
 def AntGoalEnv() -> GoalEnv:
-    limits = 8
+    limits = 10
     env = AntAsGoalEnv(limits=limits)
     env = PlotGoalWrapper(env, goal_limit=limits)
     env = DenseGoalWrapper(env)

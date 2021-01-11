@@ -13,8 +13,9 @@ from envs.custom_envs import make_fetch_reach_env, make_fetch_pick_and_place_env
 
 
 class TimeFeature(ObservationWrapper):
-    def __init__(self, env: TimeLimit):
+    def __init__(self, env: TimeLimit, is_training=True):
         super().__init__(env)
+        self._is_training = is_training
         self._time_feature_range = (-1, 1)
         obs_len = self.env.observation_space["observation"].shape[0]
         self.observation_space = gym.spaces.Dict(spaces=dict(
@@ -26,7 +27,8 @@ class TimeFeature(ObservationWrapper):
 
     def observation(self, observation: dict):
         obs = OrderedDict(**observation)
-        obs["observation"] = np.hstack((obs["observation"], self._get_time_feature()))
+        time_feature = self._get_time_feature() if self._is_training else max(self._time_feature_range)
+        obs["observation"] = np.hstack((obs["observation"], time_feature))
         return obs
 
     def _get_time_feature(self):

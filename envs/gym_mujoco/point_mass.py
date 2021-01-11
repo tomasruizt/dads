@@ -68,8 +68,8 @@ class PointMassEnv(mujoco_env.MujocoEnv, utils.EzPickle):
       ori = qpos[2]
       dx = math.cos(ori) * force
       dy = math.sin(ori) * force
-      qpos[0] = np.clip(qpos[0] + dx, -2*self._lims, 2*self._lims)
-      qpos[1] = np.clip(qpos[1] + dy, -2*self._lims, 2*self._lims)
+      qpos[0] = np.clip(qpos[0] + dx, -4*self._lims, 4*self._lims)
+      qpos[1] = np.clip(qpos[1] + dy, -4*self._lims, 4*self._lims)
       qvel = self.sim.data.qvel.flat.copy()
       self.set_state(qpos, qvel)
 

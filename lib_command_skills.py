@@ -89,9 +89,14 @@ class MVNStrategy(MutualInfoStrategy):
         return mvn.logpdf(x=delta, cov=self.cov["g'|g"])
 
 
+ANT_NORMALIZATION = 0.1
+
+
 class SkillWrapper(Wrapper):
-    def __init__(self, env: GoalEnv, skill_reset_steps: int, skill_dim=None):
+    def __init__(self, env: GoalEnv, skill_reset_steps: int = -1, skill_dim=None):
         super().__init__(env)
+        self._env_is_ant = hasattr(env, "IS_ANT") and env.IS_ANT
+        self._do_reset_skill = skill_reset_steps > -1
         self._skill_reset_steps = skill_reset_steps
         self._skill_dim = skill_dim or env.observation_space["desired_goal"].shape[0]
         obs_dim = self.env.observation_space["observation"].shape[0]
@@ -100,13 +105,18 @@ class SkillWrapper(Wrapper):
         self._cur_skill = self.strategy.sample_skill()
         self._last_dict_obs = None
         self._goal_deltas_stats = [Statistics([1e-6]) for _ in range(self._skill_dim)]
+        self._latest_goal_delta_stats = dict()
 
     def _normalize(self, delta):
+        if self._env_is_ant:
+            return delta / ANT_NORMALIZATION
         _, σs, maxs = self.get_deltas_statistics()
         ns = [np.mean((σ, m)) for σ, m in zip(σs, maxs)]
         return np.asarray([d/n for d, n in zip(delta, ns)])
 
     def _denormalize(self, skill):
+        if self._env_is_ant:
+            return skill * ANT_NORMALIZATION
         _, σs, maxs = self.get_deltas_statistics()
         ns = [np.mean((σ, m)) for σ, m in zip(σs, maxs)]
         return skill * np.asarray(ns)
@@ -121,7 +131,7 @@ class SkillWrapper(Wrapper):
         dict_obs, _, done, info = self.env.step(action)
         reward = self._reward(dict_obs=dict_obs)
         self._last_dict_obs = dict_obs
-        if np.random.random() < 1/self._skill_reset_steps:
+        if self._do_reset_skill and np.random.random() < 1/self._skill_reset_steps:
             self._cur_skill = self.strategy.sample_skill()
         flat_obs_w_skill = self._add_skill(observation=dict_obs["observation"])
         return flat_obs_w_skill, reward, done, info
@@ -132,11 +142,28 @@ class SkillWrapper(Wrapper):
         goal_delta = (cur_diff - last_diff)[:self._skill_dim]
         for s, d in zip(self._goal_deltas_stats, goal_delta):
             s.push(d)
-        mi = self.strategy.get_mutual_info(goal_delta=self._normalize(goal_delta),
+        goal_delta_normalized = self._normalize(goal_delta)
+        mi = self.strategy.get_mutual_info(goal_delta=goal_delta_normalized,
                                            skill=self._cur_skill)
-        if mi < -100:
-            logging.warning(f"Mutual information very low: {mi}. Clipping it to -100")
-        return max(mi, -100)
+        mi_lower_bound = -10
+        if mi < mi_lower_bound:
+            logging.warning(f"Mutual information very low: {mi}. Clipping it to {mi_lower_bound}")
+            mi = max(mi, mi_lower_bound)
+        self._log_delta_stats(goal_delta, goal_delta_normalized, mi)
+        return mi
+
+    def _log_delta_stats(self, delta, delta_normalized, mutual_information):
+        names = ["deltas", "normalize(deltas)", "MI"]
+        vals = [delta, delta_normalized, mutual_information]
+        for name, val in zip(names, vals):
+            if name not in self._latest_goal_delta_stats:
+                self._latest_goal_delta_stats[name] = []
+            self._latest_goal_delta_stats[name].append(val)
+
+    def get_goal_delta_stats(self):
+        stats = self._latest_goal_delta_stats
+        self._latest_goal_delta_stats = dict()
+        return stats
 
     def reset(self, **kwargs):
         self._cur_skill = self.strategy.sample_skill()
@@ -181,9 +208,9 @@ class BestSkillProvider:
         self._planner = MPPI(dynamics=self._dynamics_fn,
                              running_cost=self._cost_fn,
                              nx=env.dyn_obs_dim(),
-                             num_samples=500,
+                             num_samples=100,
                              noise_sigma=0.1*torch.eye(env.dyn_obs_dim()), device="cpu",
-                             horizon=5, lambda_=1e-6)
+                             horizon=3, lambda_=1e-6)
 
     def best_skill_for(self, dict_obs: dict) -> np.ndarray:
         relative_goal = dict_obs["achieved_goal"] - dict_obs["desired_goal"]
