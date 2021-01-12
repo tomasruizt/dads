@@ -78,7 +78,7 @@ CONFS = dict(
     reach=Conf(ep_len=50, num_episodes=10*50),
     push=Conf(ep_len=50, num_episodes=6*1000, skill_dim=2, layer_size=512, buffer_size=100_000,
               reward_scaling=1/10),
-    pointmass=Conf(ep_len=50, num_episodes=2000, eval_freq_in_episodes=100, buffer_size=10_000, lr=0.001),
+    pointmass=Conf(ep_len=150, num_episodes=800, eval_freq_in_episodes=40, buffer_size=100_000, lr=0.001),
     ant=Conf(ep_len=200, num_episodes=int(3e6) // 200, eval_freq_in_episodes=150,
              layer_size=512, batch_size=512, buffer_size=1_000_000)
 )

@@ -113,7 +113,7 @@ class PointMassEnv(mujoco_env.MujocoEnv, utils.EzPickle):
 
 
 def PointMassGoalEnv() -> GoalEnv:
-    goal_limit = 5
+    goal_limit = 10
     env = PointMassAsGoalEnv(goal_limits=goal_limit)
     env = PlotGoalWrapper(env, goal_limit=goal_limit)
     env = DenseGoalWrapper(env)
