@@ -10,7 +10,8 @@ from itertools import product
 import torch
 
 from lib_command_skills import SkillWrapper, GDADSEvalWrapper, as_dict_env, \
-    eval_inflen_dict_env, flatten_env, LogDeltaStatistics, BestSkillProvider
+    eval_inflen_dict_env, flatten_env, LogDeltaStatistics, BestSkillProvider, \
+    ant_grid_evaluation, dump_ant_grid_evaluation
 from envs.gym_mujoco.custom_wrappers import DropGoalEnvsAbsoluteLocation
 from skill_slider import create_sliders_widget
 
@@ -63,11 +64,13 @@ def show(model, env, conf: Conf):
 
 
 def train(model: SAC, conf: Conf, save_fname: str, eval_env):
+    model.env.reset()
     model.learn(total_timesteps=conf.ep_len * conf.num_episodes,
                 log_interval=10,
                 callback=[eval_cb(env=eval_env, conf=conf, save_fname=save_fname),
                           LogDeltaStatistics(n_steps=conf.ep_len),
-                          LogDeltasHistogram(env=model.env, freq_in_steps=25 * conf.ep_len)])
+                          LogDeltasHistogram(env=model.env, freq_in_steps=25 * conf.ep_len)],
+                reset_num_timesteps=False)
 
 
 CONFS = dict(
@@ -212,12 +215,16 @@ def main(do_render: bool, seed: int, as_gdads: bool, name: str, do_train: bool):
     else:
         sac = SAC("MlpPolicy", env=flat_env, verbose=1, learning_rate=conf.lr,
                   tensorboard_log=filename, buffer_size=conf.buffer_size, batch_size=conf.batch_size, gamma=gamma(conf.ep_len),
-                  learning_starts=100*conf.ep_len, policy_kwargs=dict(log_std_init=-3, net_arch = [conf.layer_size]*2),
+                  learning_starts=100*conf.ep_len, policy_kwargs=dict(log_std_init=-3, net_arch=[conf.layer_size]*2),
                   seed=seed, device="cuda", train_freq=4)
     if do_train:
         train(model=sac, conf=conf, save_fname=filename, eval_env=eval_env)
     if do_render:
         show(model=sac, env=eval_env, conf=conf)
+    do_eval = not do_train and not do_render
+    if do_eval:
+        results = ant_grid_evaluation(model=sac, env=eval_env, episode_len=conf.ep_len)
+        dump_ant_grid_evaluation(results)
 
 
 def parallel_main(args):

@@ -205,8 +205,10 @@ class AntAsGoalEnv(AntEnv):
                     desired_goal=self._goal.astype(np.float32),
                     observation=obs)
 
-    def reset(self):
-        self._goal = np.random.uniform(-self._limits, self._limits, size=2)
+    def reset(self, new_goal=None):
+        if new_goal is None:
+            new_goal = np.random.uniform(-self._limits, self._limits, size=2)
+        self._goal = new_goal
         return super().reset()
 
     @property

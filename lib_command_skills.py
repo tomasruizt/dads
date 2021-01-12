@@ -245,8 +245,8 @@ class GDADSEvalWrapper(Wrapper):
         flat_obs_w_skill = np.concatenate((dict_obs["observation"], skill))
         return (flat_obs_w_skill, *step)
 
-    def reset(self):
-        dict_obs = self.env.reset()
+    def reset(self, **kwargs):
+        dict_obs = self.env.reset(**kwargs)
         skill = self._sw.best_skill_for(dict_obs)
         return np.concatenate((dict_obs["observation"], skill))
 
@@ -281,6 +281,44 @@ def eval_inflen_dict_env(model, env, episode_len: int) -> Generator:
             action, _ = model.predict(dict_obs, deterministic=True)
             dict_obs, reward, done, info = env.step(action)
             yield reward, info
+
+
+def ant_grid_evaluation(model, env, episode_len: int):
+    num_eval_episodes = 1000
+    goal_metric_list = []
+    for eval_idx in range(1, num_eval_episodes + 1):
+        goal = sample_ant_goal()
+        rewards = []
+        dict_obs = env.reset(new_goal=goal)
+        for _ in range(episode_len):
+            action, _ = model.predict(dict_obs, deterministic=True)
+            dict_obs, reward, done, info = env.step(action)
+            rewards.append(reward)
+        metric = -np.mean(rewards) / np.linalg.norm(goal)
+        goal_metric_list.append((goal, metric))
+
+        if eval_idx % 50 == 0:
+            print(f"Evaluated {eval_idx} episodes")
+    return goal_metric_list
+
+
+def dump_ant_grid_evaluation(results):
+    import pandas as pd
+    goal_x, goal_y = np.asarray([r[0] for r in results]).T
+    metrics = np.asarray([r[1] for r in results])
+    df = pd.DataFrame(data=dict(GOAL_X=goal_x, GOAL_Y=goal_y, METRIC=metrics))
+    fname = "ant-evaluation-results.csv"
+    df.to_csv(fname, index=False)
+    print(f"Dumped evaluation to {fname}")
+
+
+def sample_ant_goal() -> np.ndarray:
+    """Samples uniform integer radii in [5,30] and a direction in [0, 2π]"""
+    radius = np.random.randint(low=5, high=31)  # 31 not included
+    orientation = np.random.uniform(low=0, high=2*np.pi)
+    x = radius * np.cos(orientation)
+    y = radius * np.sin(orientation)
+    return np.asarray([x, y])
 
 
 def save_cb(name: str):
