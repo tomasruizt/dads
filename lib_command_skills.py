@@ -32,8 +32,6 @@ class MutualInfoStrategy:
         log["p(g'|z,g)"] = self._mi_numerator(delta=goal_delta, skill=skill)
         log["p(g'|g)"] = self._mi_denominator(delta=goal_delta)
         mutual_info = log["p(g'|z,g)"] - log["p(g'|g)"]
-        if mutual_info < -20:
-            logging.warning("Low Mutual Info %s" % str((mutual_info, log["p(g'|z,g)"], log["p(g'|g)"])))
         return mutual_info
 
     def choose_skill(self, desired_delta: np.ndarray) -> np.ndarray:

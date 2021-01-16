@@ -3,7 +3,7 @@ library(ggplot2)
 # svg aspect: 500px times 350px
 
 setwd("/tomasruiz/code/thesis/dads/")
-results <- fread("plot-results/raw-data/pointmass/dads.csv")
+results <- fread("plot-results/raw-data/ant/dads-ant.csv")
 #results[, ITERATION := ITERATION / 500L]
 
 name <- function(goalSpace, resampling) {
@@ -12,7 +12,7 @@ name <- function(goalSpace, resampling) {
     if (resampling)
         return("Resampling Scheme")
     if (goalSpace)
-        return("Goal-Space Control")
+        return("G-DADS")
 }
 
 preprocess <- function(DT) {
@@ -24,10 +24,11 @@ means <- preprocess(results)
 
 dadsReachResults <- function() {
     color <- "blue"
+    ablation <- "DADS"
     ablation <- "Goal-Space Control"
     ablation <- "Resampling Scheme"
     taskcompletion <- means[ABLATION == ablation & MEASUREMENT == "IS_SUCCESS"]
-    taskcompletion <- taskcompletion[, .(ITERATION, COMPLETION=100*VALUE, SD=100*SD)]
+    taskcompletion <- taskcompletion[, .(ITERATION, COMPLETION=VALUE, SD=SD)]
     plotAvgTaskCompletion(DT = taskcompletion)
     print(mean(taskcompletion$COMPLETION))
 
@@ -37,17 +38,19 @@ dadsReachResults <- function() {
     print(mean(intRew$PSEUDOREWARD))
 }
 
+successRateTitle <- "Success Rate ∈ [0,1]"
+
 cmpTaskCompletion <- function() {
-    cmp <- fread("plot-results/raw-data/pointmass/gsc.csv")
+    cmp <- fread("plot-results/raw-data/ant/gsc-ant-success1run.csv")
     cmp[, ITERATION := ITERATION / 600]
     cmpMeans <- preprocess(cmp)
     taskcompletion <- rbind(means, cmpMeans)[MEASUREMENT == "IS_SUCCESS"]
-    taskcompletion[, `:=`(COMPLETION=100*VALUE, SD=50*SD, ALGORITHM=ABLATION)]
+    taskcompletion[, `:=`(COMPLETION = VALUE, SD = SD, ALGORITHM = ABLATION)]
     ggplot(taskcompletion, aes(x = ITERATION, y = COMPLETION, color = ALGORITHM)) +
         geom_line(size = 1) +
         geom_ribbon(aes(ymax = COMPLETION + SD, ymin = COMPLETION - SD, fill = ALGORITHM), alpha = 0.3, color = NA) +
-        ylim(-10, 100) +
-        ggtitle("Average Task Completion [%]")
+        scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.2), name = successRateTitle) +
+        ggtitle(successRateTitle)
 }
 
 plotIntrinsicReward <- function(DT, color = "blue") {
@@ -58,11 +61,14 @@ plotIntrinsicReward <- function(DT, color = "blue") {
 }
 
 plotAvgTaskCompletion <- function(DT, color = "blue") {
+    ymin <- with(DT, min(COMPLETION - SD, 0))
+    yMax <- with(DT, max(COMPLETION + SD, 1))
     ggplot(DT, aes(x = ITERATION, y = COMPLETION)) +
         geom_line(size = 1, color = color) +
         geom_ribbon(aes(ymax = COMPLETION + SD, ymin = COMPLETION - SD), fill = color, alpha = 0.3, color = NA) +
-        ggtitle("Average Task Completion [%]") +
-        ylim(0, 100)
+        ggtitle(successRateTitle) +
+        scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(ymin, yMax)) +
+        ylab(successRateTitle)
 }
 
 dadsPushDiagnostic <- function() {

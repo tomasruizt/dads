@@ -13,15 +13,15 @@
 --record_freq=25
 --num_evals=0
 --per_skill_evals=1
---num_epochs=5001
+--num_epochs=6001
 
 --replay_buffer_capacity=10000
 --initial_collect_steps=2000
 --collect_steps=500
 --resample_prob=1
---steps_before_resample=100
+--steps_before_resample=200
 
---num_components=1
+--num_components=4
 --skill_dyn_train_steps=16
 --skill_dyn_batch_size=256
 --agent_train_steps=64
@@ -29,7 +29,7 @@
 --hidden_layer_size=512
 
 # Sparse-like environment
---mpc_eval_freq=10
+--mpc_eval_freq=100
 --run_final_eval=0
 --primitive_horizon=10
 --num_candidate_sequences=100
